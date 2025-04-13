@@ -1,0 +1,160 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userRole == 'admin';
+    }
+    
+    function isManager() {
+      let userRole = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userRole;
+      return isSignedIn() && (userRole == 'manager' || userRole == 'admin' || userRole == 'owner');
+    }
+    
+    function isWorkspaceOwner(workspaceId) {
+      let workspace = get(/databases/$(database)/documents/workspaces/$(workspaceId));
+      return isSignedIn() && workspace.data.ownerId == request.auth.uid;
+    }
+    
+    function isWorkspaceMember(workspaceId) {
+      let memberQuery = exists(/databases/$(database)/documents/workspaceMembers/$(request.auth.uid + '_' + workspaceId)) || 
+                        exists(/databases/$(database)/documents/workspaceMembers/$(workspaceId + '_' + request.auth.uid));
+      
+      // Also check the members collection with separate IDs
+      let membersCollection = collection(/databases/$(database)/documents/workspaceMembers);
+      let memberDocs = membersCollection.where("workspaceId", "==", workspaceId).where("userId", "==", request.auth.uid).limit(1);
+      
+      return isSignedIn() && (memberQuery || memberDocs.size() > 0);
+    }
+    
+    function isWorkspaceAdmin(workspaceId) {
+      let memberQuery = get(/databases/$(database)/documents/workspaceMembers).where("workspaceId", "==", workspaceId).where("userId", "==", request.auth.uid).limit(1);
+      return isSignedIn() && memberQuery.size() > 0 && 
+             (memberQuery.docs[0].data.role == 'admin' || memberQuery.docs[0].data.role == 'owner');
+    }
+    
+    function isTaskCreator(taskId) {
+      let task = get(/databases/$(database)/documents/tasks/$(taskId));
+      return isSignedIn() && task.data.creatorId == request.auth.uid;
+    }
+    
+    function isTaskAssignee(taskId) {
+      let task = get(/databases/$(database)/documents/tasks/$(taskId));
+      return isSignedIn() && task.data.assigneeIds.hasAny([request.auth.uid]);
+    }
+    
+    // User profiles
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if request.auth.uid == userId;
+      allow update: if request.auth.uid == userId || isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Workspaces
+    match /workspaces/{workspaceId} {
+      allow read: if isSignedIn() && isWorkspaceMember(workspaceId);
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (isWorkspaceOwner(workspaceId) || isWorkspaceAdmin(workspaceId));
+      allow delete: if isSignedIn() && isWorkspaceOwner(workspaceId);
+    }
+    
+    // Workspace members
+    match /workspaceMembers/{memberId} {
+      allow read: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        isWorkspaceMember(resource.data.workspaceId)
+      );
+      
+      allow create: if isSignedIn() && (
+        // Allow creating your own membership when accepting an invitation
+        (request.resource.data.userId == request.auth.uid) ||
+        // Allow workspace admins to add members
+        isWorkspaceAdmin(request.resource.data.workspaceId)
+      );
+      
+      allow update: if isSignedIn() && (
+        isWorkspaceAdmin(resource.data.workspaceId) ||
+        // Allow users to update their own membership
+        (resource.data.userId == request.auth.uid && 
+         request.resource.data.userId == request.auth.uid &&
+         resource.data.workspaceId == request.resource.data.workspaceId)
+      );
+      
+      allow delete: if isSignedIn() && (
+        isWorkspaceAdmin(resource.data.workspaceId) ||
+        // Allow users to leave a workspace
+        resource.data.userId == request.auth.uid
+      );
+    }
+    
+    // Tasks
+    match /tasks/{taskId} {
+      allow read: if isSignedIn() && isWorkspaceMember(resource.data.workspaceId);
+      
+      allow create: if isSignedIn() && 
+                     isWorkspaceMember(request.resource.data.workspaceId) &&
+                     request.resource.data.creatorId == request.auth.uid;
+      
+      allow update: if isSignedIn() && (
+        isWorkspaceAdmin(resource.data.workspaceId) ||
+        isTaskCreator(taskId) ||
+        isTaskAssignee(taskId)
+      );
+      
+      allow delete: if isSignedIn() && (
+        isWorkspaceAdmin(resource.data.workspaceId) ||
+        isTaskCreator(taskId)
+      );
+    }
+    
+    // Task invitations
+    match /taskInvitations/{invitationId} {
+      allow read: if isSignedIn() && (
+        resource.data.inviteeId == request.auth.uid || 
+        resource.data.inviterId == request.auth.uid ||
+        isWorkspaceAdmin(resource.data.workspaceId)
+      );
+      
+      allow create: if isSignedIn() && 
+                     isWorkspaceMember(request.resource.data.workspaceId) &&
+                     request.resource.data.inviterId == request.auth.uid;
+      
+      allow update: if isSignedIn() && (
+        resource.data.inviteeId == request.auth.uid || 
+        resource.data.inviterId == request.auth.uid
+      );
+      
+      allow delete: if isSignedIn() && resource.data.inviterId == request.auth.uid;
+    }
+    
+    // Workspace invitations
+    match /workspaceInvitations/{invitationId} {
+      allow read: if isSignedIn() && (
+        resource.data.email == request.auth.token.email ||
+        isWorkspaceAdmin(resource.data.workspaceId)
+      );
+      
+      allow create: if isSignedIn() && isWorkspaceAdmin(request.resource.data.workspaceId);
+      
+      allow update: if isSignedIn() && (
+        resource.data.email == request.auth.token.email ||
+        isWorkspaceAdmin(resource.data.workspaceId)
+      );
+      
+      allow delete: if isSignedIn() && isWorkspaceAdmin(resource.data.workspaceId);
+    }
+    
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+  }
+}

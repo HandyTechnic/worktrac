@@ -1,0 +1,75 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      "$uid": {
+        ".read": "auth !== null && auth.uid === $uid",
+        ".write": "auth !== null && (auth.uid === $uid || root.child('users').child(auth.uid).child('userRole').val() === 'admin')"
+      }
+    },
+
+    "userStatus": {
+      "$uid": {
+        ".read": "auth !== null",
+        ".write": "auth !== null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['status', 'lastActive']) && newData.child('status').isString() && newData.child('lastActive').isNumber()"
+      }
+    },
+
+    "workspaces": {
+      "$workspaceId": {
+        ".read": "auth !== null && (root.child('workspaceMembers').child($workspaceId).child(auth.uid).exists() || root.child('workspaceMembers').child(auth.uid + '_' + $workspaceId).exists())",
+        ".write": "auth !== null && (data.child('ownerId').val() === auth.uid || root.child('workspaceMembers').child($workspaceId).child(auth.uid).child('role').val() === 'admin' || root.child('workspaceMembers').child($workspaceId).child(auth.uid).child('role').val() === 'owner')"
+      }
+    },
+
+    "tasks": {
+      "$workspaceId": {
+        ".read": "auth !== null && (root.child('workspaceMembers').child($workspaceId).child(auth.uid).exists() || root.child('workspaceMembers').child(auth.uid + '_' + $workspaceId).exists())",
+
+        "$taskId": {
+          ".write": "auth !== null && (data.child('creatorId').val() === auth.uid || data.child('assigneeIds').val().contains(auth.uid) || root.child('workspaceMembers').child($workspaceId).child(auth.uid).child('role').val() === 'admin' || root.child('workspaceMembers').child($workspaceId).child(auth.uid).child('role').val() === 'owner')"
+        }
+      }
+    },
+
+    "taskUpdates": {
+      "$taskId": {
+        ".read": "auth !== null && root.child('tasks').child(root.child('taskWorkspaceMap').child($taskId).val()).child($taskId).exists() && (root.child('workspaceMembers').child(root.child('taskWorkspaceMap').child($taskId).val()).child(auth.uid).exists() || root.child('workspaceMembers').child(auth.uid + '_' + root.child('taskWorkspaceMap').child($taskId).val()).exists())",
+
+        "$updateId": {
+          ".write": "auth !== null && (root.child('tasks').child(root.child('taskWorkspaceMap').child($taskId).val()).child($taskId).child('creatorId').val() === auth.uid || root.child('tasks').child(root.child('taskWorkspaceMap').child($taskId).val()).child($taskId).child('assigneeIds').val().contains(auth.uid))"
+        }
+      }
+    },
+
+    "notifications": {
+      "$uid": {
+        ".read": "auth !== null && auth.uid === $uid",
+        ".write": "auth !== null",
+
+        "$notificationId": {
+          ".validate": "newData.child('userId').val() === $uid"
+        }
+      }
+    },
+
+    "presence": {
+      ".read": "auth !== null",
+
+      "$uid": {
+        ".write": "auth !== null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['online', 'lastActive']) && newData.child('online').isBoolean() && newData.child('lastActive').isNumber()"
+      }
+    },
+
+    "taskWorkspaceMap": {
+      "$taskId": {
+        ".read": "auth !== null",
+        ".write": "auth !== null && (!data.exists() || root.child('workspaceMembers').child(newData.val()).child(auth.uid).child('role').val() === 'admin' || root.child('workspaceMembers').child(newData.val()).child(auth.uid).child('role').val() === 'owner')"
+      }
+    }
+  }
+}
