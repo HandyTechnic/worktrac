@@ -10,8 +10,8 @@ import { useWorkspace } from "@/contexts/workspace-context"
 import { doc, getDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase/config"
 import { getWorkspaceMembers } from "@/lib/firebase/workspace"
-import { createNotification } from "@/lib/firebase/notifications"
-import { createTaskInvitation } from "@/lib/firebase/invitations"
+import { sendNotification } from "@/lib/notification-service"
+import { createTaskInvitation } from "@/lib/firebase/task-invitations"
 
 const TaskContext = createContext<
   | {
@@ -153,6 +153,21 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 assigneeId,
                 currentWorkspace.id,
               )
+
+              // Send notification
+              await sendNotification({
+                userId: assigneeId as string,
+                type: "task_invitation",
+                title: "Task Invitation",
+                message: `${user?.name || "A team member"} has invited you to join a task: "${task.title}"`,
+                actionUrl: `/task/${taskId}`,
+                relatedId: taskId,
+                metadata: {
+                  taskId,
+                  inviterId: user?.id,
+                  taskTitle: task.title,
+                },
+              })
             } catch (error) {
               console.error(`Error inviting user ${assigneeId} to task:`, error)
             }
@@ -164,7 +179,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error("Error adding task:", error)
       }
     },
-    [currentWorkspace, userRole, user?.id],
+    [currentWorkspace, userRole, user?.id, user?.name],
   )
 
   // Update the handleUpdateTask function to check permissions
@@ -198,7 +213,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Notify all managers
             for (const manager of managerMembers) {
-              await createNotification({
+              await sendNotification({
                 userId: manager.userId,
                 type: "task_approval_request",
                 title: "Task Approval Required",
@@ -208,20 +223,25 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 metadata: {
                   taskId,
                   creatorId: currentTask.creatorId,
-                  creatorName: currentTask.creatorName || "Unknown",
+                  creatorName: user?.name || "Unknown",
                 },
               })
             }
           } else {
             // If no approval required, notify the creator if they're not the one completing it
             if (currentTask.creatorId !== user?.id) {
-              await createNotification({
+              await sendNotification({
                 userId: currentTask.creatorId,
                 type: "task_completed",
                 title: "Task Completed",
                 message: `The task "${currentTask.title}" has been marked as completed.`,
                 actionUrl: `/task/${taskId}`,
                 relatedId: taskId,
+                metadata: {
+                  taskId,
+                  completedBy: user?.id,
+                  completedByName: user?.name || "Unknown",
+                },
               })
             }
           }
@@ -235,8 +255,8 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Notify all assignees
           for (const assigneeId of currentTask.assigneeIds) {
             if (assigneeId !== user?.id) {
-              await createNotification({
-                userId: assigneeId,
+              await sendNotification({
+                userId: assigneeId as string,
                 type: taskData.status === "approved" ? "task_approved" : "task_rejected",
                 title: taskData.status === "approved" ? "Task Approved" : "Task Rejected",
                 message:
@@ -245,6 +265,11 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     : `The task "${currentTask.title}" has been rejected and needs revision.`,
                 actionUrl: `/task/${taskId}`,
                 relatedId: taskId,
+                metadata: {
+                  taskId,
+                  approvedBy: user?.id,
+                  approvedByName: user?.name || "Unknown",
+                },
               })
             }
           }
@@ -258,26 +283,36 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Notify all assignees except the commenter
           for (const assigneeId of currentTask.assigneeIds) {
             if (assigneeId !== newUpdate.userId) {
-              await createNotification({
-                userId: assigneeId,
+              await sendNotification({
+                userId: assigneeId as string,
                 type: "comment_added",
                 title: "New Comment",
-                message: `A new comment has been added to the task "${currentTask.title}".`,
+                message: `${user?.name || "A team member"} added a comment to the task "${currentTask.title}".`,
                 actionUrl: `/task/${taskId}?tab=updates`,
                 relatedId: taskId,
+                metadata: {
+                  taskId,
+                  commenterId: user?.id,
+                  commenterName: user?.name || "Unknown",
+                },
               })
             }
           }
 
           // Also notify the task creator if they're not the commenter and not already in assignees
           if (currentTask.creatorId !== newUpdate.userId && !currentTask.assigneeIds.includes(currentTask.creatorId)) {
-            await createNotification({
+            await sendNotification({
               userId: currentTask.creatorId,
               type: "comment_added",
               title: "New Comment",
-              message: `A new comment has been added to the task "${currentTask.title}".`,
+              message: `${user?.name || "A team member"} added a comment to the task "${currentTask.title}".`,
               actionUrl: `/task/${taskId}?tab=updates`,
               relatedId: taskId,
+              metadata: {
+                taskId,
+                commenterId: user?.id,
+                commenterName: user?.name || "Unknown",
+              },
             })
           }
         }

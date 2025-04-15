@@ -10,6 +10,8 @@ export default function RootLayout({ children }) {
       <head>
         <title>WorkTrac - Team Work Management</title>
         <meta name="description" content="A collaborative work management application with Gantt chart interface" />
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#4f46e5" />
       </head>
       <body className={inter.className}>
         <ClientLayout>{children}</ClientLayout>

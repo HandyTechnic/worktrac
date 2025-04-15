@@ -135,7 +135,7 @@ export default function TeamMemberSelectionDialog({
   const getEligibleMembers = () => {
     if (!currentWorkspace || !user) return []
 
-    // If user is workspace owner or manager, all workspace members are eligible
+    // If user is workspace owner, all workspace members are eligible
     if (userRole === "owner" || userRole === "admin" || userRole === "manager") {
       return workspaceMembers
     }

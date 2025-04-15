@@ -545,11 +545,9 @@ export default function PeopleGanttChart() {
             </Button>
 
             {/* Only show New Task button for owners and managers */}
-            {isManagerOrOwner && (
               <Button size="sm" onClick={() => setShowTaskCreation(true)}>
                 <Plus className="h-4 w-4 mr-1" /> New Task
               </Button>
-            )}
           </div>
         </div>
 

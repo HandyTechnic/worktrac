@@ -261,9 +261,6 @@ export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
                     ? [user?.id]
                     : []
 
-                // For regular members, we'll need to send invitations for other assignees
-                const subtaskInvitationAssignees = isManager ? [] : st.assigneeIds.filter((id) => id !== user?.id)
-
                 return {
                   title: st.title,
                   assigneeIds: directSubtaskAssignees,
@@ -506,18 +503,12 @@ export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
                         onCheckedChange={() => toggleAssignee(member.userId)}
                       />
                       <div className="flex items-center flex-1 min-w-0">
-                        <Avatar className="h-8 w-8 mr-2">
+                        <Avatar className="h-6 w-6 mr-2">
                           <AvatarFallback>{member.name?.charAt(0) || "U"}</AvatarFallback>
                         </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <Label htmlFor={`assignee-${member.userId}`} className="text-sm cursor-pointer">
-                            {member.name}
-                          </Label>
-                          <p className="text-xs text-muted-foreground truncate">{member.role || "Team Member"}</p>
-                        </div>
-                        <Badge variant="outline" className="ml-2 capitalize">
-                          {member.role}
-                        </Badge>
+                        <Label htmlFor={`assignee-${member.userId}`} className="text-sm cursor-pointer truncate">
+                          {member.name}
+                        </Label>
                       </div>
                     </div>
                   ))}
