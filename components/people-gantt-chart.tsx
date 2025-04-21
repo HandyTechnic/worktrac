@@ -3,7 +3,17 @@
 import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
-import { format, addDays, subDays, eachDayOfInterval, isSameDay, isAfter, startOfDay } from "date-fns"
+import {
+  format,
+  addDays,
+  subDays,
+  eachDayOfInterval,
+  isSameDay,
+  isAfter,
+  startOfDay,
+  endOfDay,
+  differenceInDays,
+} from "date-fns"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Plus, ChevronRight, Calendar, ZoomIn, ZoomOut, AlertCircle, Minus, PlusIcon } from "lucide-react"
@@ -35,6 +45,13 @@ const DAYS_PER_ZOOM = [60, 45, 30, 15, 7] // Days visible at each zoom level
 export default function PeopleGanttChart() {
   const { toast } = useToast()
   const isMobile = useMobile()
+  const { user } = useAuth()
+  const { currentWorkspace, userRole } = useWorkspace()
+
+  // Check if user has permission to view this page
+  const hasPermission = userRole === "owner" || userRole === "admin"
+
+  // State variables, initialized to default values
   const [centerDate, setCenterDate] = useState(new Date())
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [selectedSubtask, setSelectedSubtask] = useState<SubTask | null>(null)
@@ -43,14 +60,13 @@ export default function PeopleGanttChart() {
   const [expandedTasks, setExpandedTasks] = useState<{ [staffId: string]: string[] }>({})
   const [zoomLevel, setZoomLevel] = useState(DEFAULT_ZOOM)
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([])
-  const containerRef = useRef<HTMLDivElement>(null)
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [subtaskDialogOpen, setSubtaskDialogOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
+  const containerRef = useRef<HTMLDivElement>(null)
+
   const { tasks, loading, updateTask, deleteTask } = useTasks()
-  const { user } = useAuth()
-  const { currentWorkspace, userRole } = useWorkspace()
   const showCompletedTasks = currentWorkspace?.settings?.showCompletedTasks !== false
 
   // Check if user is a manager or owner
@@ -60,8 +76,8 @@ export default function PeopleGanttChart() {
   const daysToShow = DAYS_PER_ZOOM[zoomLevel - 1]
 
   // Calculate start and end dates based on center date and zoom level
-  const startDate = subDays(centerDate, Math.floor(daysToShow / 2))
-  const endDate = addDays(centerDate, Math.ceil(daysToShow / 2))
+  const startDate = startOfDay(subDays(centerDate, Math.floor(daysToShow / 2)))
+  const endDate = endOfDay(addDays(centerDate, Math.ceil(daysToShow / 2)))
 
   // Generate array of days for the header
   const days = eachDayOfInterval({ start: startDate, end: endDate })
@@ -360,12 +376,13 @@ export default function PeopleGanttChart() {
       return { earliest: new Date(), latest: new Date() }
     }
 
-    let earliest = new Date(staffTasks[0].startDate)
-    let latest = new Date(staffTasks[0].endDate)
+    // Initialize with the first task's dates
+    let earliest = startOfDay(new Date(staffTasks[0].startDate))
+    let latest = endOfDay(new Date(staffTasks[0].endDate))
 
     staffTasks.forEach((task) => {
-      const taskStart = new Date(task.startDate)
-      const taskEnd = new Date(task.endDate)
+      const taskStart = startOfDay(new Date(task.startDate))
+      const taskEnd = endOfDay(new Date(task.endDate))
 
       if (taskStart < earliest) earliest = taskStart
       if (taskEnd > latest) latest = taskEnd
@@ -373,8 +390,8 @@ export default function PeopleGanttChart() {
       // Check subtasks too
       if (task.subtasks) {
         task.subtasks.forEach((subtask) => {
-          const subtaskStart = new Date(subtask.startDate)
-          const subtaskEnd = new Date(subtask.endDate)
+          const subtaskStart = startOfDay(new Date(subtask.startDate))
+          const subtaskEnd = endOfDay(new Date(subtask.endDate))
 
           if (subtaskStart < earliest) earliest = subtaskStart
           if (subtaskEnd > latest) latest = subtaskEnd
@@ -476,8 +493,25 @@ export default function PeopleGanttChart() {
     goToToday()
   }, [])
 
-  if (!currentWorkspace) {
-    return (
+  let content
+
+  if (!hasPermission) {
+    content = (
+      <Card className="overflow-hidden">
+        <CardContent className="p-6">
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Access Denied</AlertTitle>
+            <AlertDescription>
+              You don't have permission to view the team schedule by person. This view is restricted to workspace owners
+              and administrators.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    )
+  } else if (!currentWorkspace) {
+    content = (
       <Card className="overflow-hidden">
         <CardContent className="p-6">
           <Alert variant="warning">
@@ -488,349 +522,352 @@ export default function PeopleGanttChart() {
         </CardContent>
       </Card>
     )
-  }
+  } else {
+    const tasksByAssignee = getTasksByAssignee()
 
-  const tasksByAssignee = getTasksByAssignee()
+    // Get color based on burden score
+    const getBurdenColor = (score) => {
+      if (score < 4) return "text-success"
+      if (score >= 7) return "text-destructive"
+      return "text-warning"
+    }
 
-  // Get color based on burden score
-  const getBurdenColor = (score) => {
-    if (score < 4) return "text-success"
-    if (score >= 7) return "text-destructive"
-    return "text-warning"
-  }
+    // Get burden bar width and color
+    const getBurdenBarStyle = (score) => {
+      // Calculate width as percentage of max (10)
+      const widthPercent = Math.min(100, (score / 10) * 100)
 
-  // Get burden bar width and color
-  const getBurdenBarStyle = (score) => {
-    // Calculate width as percentage of max (10)
-    const widthPercent = Math.min(100, (score / 10) * 100)
+      let bgColor = "bg-success"
+      if (score >= 7) bgColor = "bg-destructive"
+      else if (score >= 4) bgColor = "bg-warning"
 
-    let bgColor = "bg-success"
-    if (score >= 7) bgColor = "bg-destructive"
-    else if (score >= 4) bgColor = "bg-warning"
+      return { width: `${widthPercent}%`, className: bgColor }
+    }
 
-    return { width: `${widthPercent}%`, className: bgColor }
-  }
+    // Then update the filteredTasks logic to respect this setting
+    // No need to filter tasks here as it's already done in the TaskContext
+    const filteredTasks = tasks || []
 
-  // Then update the filteredTasks logic to respect this setting
-  // No need to filter tasks here as it's already done in the TaskContext
-  const filteredTasks = tasks || []
+    content = (
+      <Card className="overflow-hidden border-0 shadow-none">
+        <CardContent className="p-0">
+          <div className="flex items-center justify-between p-2 border-b">
+            <h2 className="text-lg font-semibold">Team Schedule by Person</h2>
+            <div className="flex items-center gap-2">
+              {/* Zoom controls */}
+              <div className="flex items-center gap-2 mr-2">
+                <Button variant="outline" size="icon" onClick={zoomOut} disabled={zoomLevel <= MIN_ZOOM}>
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
 
-  return (
-    <Card className="overflow-hidden">
-      <CardContent className="p-0">
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-xl font-semibold">Team Schedule by Person</h2>
-          <div className="flex items-center gap-2">
-            {/* Zoom controls */}
-            <div className="flex items-center gap-2 mr-2">
-              <Button variant="outline" size="icon" onClick={zoomOut} disabled={zoomLevel <= MIN_ZOOM}>
-                <ZoomOut className="h-4 w-4" />
-              </Button>
+                <div className="flex items-center gap-2 w-40">
+                  <Minus className="h-3 w-3 text-muted-foreground" />
+                  <Slider value={[zoomLevel]} min={MIN_ZOOM} max={MAX_ZOOM} step={1} onValueChange={handleZoomChange} />
+                  <PlusIcon className="h-3 w-3 text-muted-foreground" />
+                </div>
 
-              <div className="flex items-center gap-2 w-40">
-                <Minus className="h-3 w-3 text-muted-foreground" />
-                <Slider value={[zoomLevel]} min={MIN_ZOOM} max={MAX_ZOOM} step={1} onValueChange={handleZoomChange} />
-                <PlusIcon className="h-3 w-3 text-muted-foreground" />
+                <Button variant="outline" size="icon" onClick={zoomIn} disabled={zoomLevel >= MAX_ZOOM}>
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
               </div>
 
-              <Button variant="outline" size="icon" onClick={zoomIn} disabled={zoomLevel >= MAX_ZOOM}>
-                <ZoomIn className="h-4 w-4" />
+              {/* Today button */}
+              <Button variant="outline" onClick={goToToday}>
+                <Calendar className="h-4 w-4 mr-2" />
+                Today
               </Button>
-            </div>
 
-            {/* Today button */}
-            <Button variant="outline" onClick={goToToday}>
-              <Calendar className="h-4 w-4 mr-2" />
-              Today
-            </Button>
-
-            {/* Only show New Task button for owners and managers */}
               <Button size="sm" onClick={() => setShowTaskCreation(true)}>
                 <Plus className="h-4 w-4 mr-1" /> New Task
               </Button>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto w-full max-h-[calc(100vh-250px)] overflow-y-auto" ref={containerRef}>
-          <div className="min-w-[800px]">
-            {/* Header with days */}
-            <div className="grid grid-cols-[250px_1fr] border-b">
-              <div className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10">
-                Team Member
-              </div>
-              <div
-                className="grid"
-                style={{
-                  gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
-                  minHeight: "56px", // Ensure consistent height
-                }}
-              >
-                {days.map((day) => (
-                  <div
-                    key={day.toString()}
-                    className={`p-3 text-center text-sm font-medium border-r last:border-r-0 ${
-                      isSameDay(day, new Date()) ? "bg-muted" : ""
-                    }`}
-                  >
-                    <div>{format(day, "EEE")}</div>
-                    <div>{format(day, "MMM d")}</div>
-                  </div>
-                ))}
-              </div>
             </div>
+          </div>
 
-            {/* Staff members with their tasks */}
-            <div className="divide-y divide-border">
-              {loading || isDeleting ? (
-                <div className="p-8 text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-                  <p className="text-muted-foreground">{isDeleting ? "Deleting task..." : "Loading tasks..."}</p>
+          <div className="overflow-x-auto w-full max-h-[calc(100vh-250px)] overflow-y-auto" ref={containerRef}>
+            <div className="min-w-[800px]">
+              {/* Header with days */}
+              <div className="grid grid-cols-[250px_1fr] border-b">
+                <div className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10">
+                  Team Member
                 </div>
-              ) : staffMembers.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">No team members found.</div>
-              ) : (
-                staffMembers
-                  .map((staff) => {
-                    const staffId = staff.id.toString()
-                    const staffData = tasksByAssignee.get(staffId)
-                    const hasAssignedWork = staffData && staffData.tasks.length > 0
+                <div
+                  className="grid"
+                  style={{
+                    gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
+                    minHeight: "56px", // Ensure consistent height
+                  }}
+                >
+                  {days.map((day) => (
+                    <div
+                      key={day.toString()}
+                      className={`p-3 text-center text-sm font-medium border-r last:border-r-0 ${
+                        isSameDay(day, new Date()) ? "bg-muted" : ""
+                      }`}
+                    >
+                      <div>{format(day, "EEE")}</div>
+                      <div>{format(day, "MMM d")}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-                    // Calculate staff burden
-                    const staffBurden = hasAssignedWork ? calculateStaffBurden(staffId, staffData!.tasks) : 0
-                    const burdenBarStyle = getBurdenBarStyle(staffBurden)
+              {/* Staff members with their tasks */}
+              <div className="divide-y divide-border">
+                {loading || isDeleting ? (
+                  <div className="p-8 text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                    <p className="text-muted-foreground">{isDeleting ? "Deleting task..." : "Loading tasks..."}</p>
+                  </div>
+                ) : staffMembers.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">No team members found.</div>
+                ) : (
+                  staffMembers
+                    .map((staff) => {
+                      const staffId = staff.id.toString()
+                      const staffData = tasksByAssignee.get(staffId)
+                      const hasAssignedWork = staffData && staffData.tasks.length > 0
 
-                    // Format the staff name
-                    const displayName = formatStaffName(staff)
+                      // Calculate staff burden
+                      const staffBurden = hasAssignedWork ? calculateStaffBurden(staffId, staffData!.tasks) : 0
+                      const burdenBarStyle = getBurdenBarStyle(staffBurden)
 
-                    return (
-                      <div key={staffId} className="group">
-                        {/* Staff member row */}
-                        <div className="grid grid-cols-[250px_1fr] border-b">
-                          <div className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className={cn(
-                                "h-5 w-5 p-0 transition-transform",
-                                expandedStaff.includes(staffId) && "rotate-90",
-                              )}
-                              onClick={(e) => toggleStaffExpansion(staffId, e)}
-                              disabled={!hasAssignedWork}
-                            >
-                              {hasAssignedWork && <ChevronRight className="h-4 w-4" />}
-                            </Button>
+                      // Format the staff name
+                      const displayName = formatStaffName(staff)
 
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <Avatar className="h-6 w-6">
-                                <AvatarFallback>{getInitials(staff.name)}</AvatarFallback>
-                              </Avatar>
-                              <div className="flex flex-col w-full min-w-0">
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="font-medium truncate">{displayName}</span>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p>{staff.name}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                                <div className="flex items-center justify-between">
-                                  <div className="text-xs text-muted-foreground">
-                                    Burden:{" "}
-                                    <span className={`font-medium ${getBurdenColor(staffBurden)}`}>
-                                      {staffBurden.toFixed(1)}
-                                    </span>
+                      return (
+                        <div key={staffId} className="group">
+                          {/* Staff member row */}
+                          <div className="grid grid-cols-[250px_1fr] border-b">
+                            <div className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={cn(
+                                  "h-5 w-5 p-0 transition-transform",
+                                  expandedStaff.includes(staffId) && "rotate-90",
+                                )}
+                                onClick={(e) => toggleStaffExpansion(staffId, e)}
+                                disabled={!hasAssignedWork}
+                              >
+                                {hasAssignedWork && <ChevronRight className="h-4 w-4" />}
+                              </Button>
+
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <Avatar className="h-6 w-6">
+                                  <AvatarFallback>{getInitials(staff.name)}</AvatarFallback>
+                                </Avatar>
+                                <div className="flex flex-col w-full min-w-0">
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="font-medium truncate">{displayName}</span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>{staff.name}</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                  <div className="flex items-center justify-between">
+                                    <div className="text-xs text-muted-foreground">
+                                      Burden:{" "}
+                                      <span className={`font-medium ${getBurdenColor(staffBurden)}`}>
+                                        {staffBurden.toFixed(1)}
+                                      </span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {staffData?.tasks.length || 0} task
+                                      {(staffData?.tasks.length || 0) !== 1 ? "s" : ""}
+                                    </div>
                                   </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {staffData?.tasks.length || 0} task
-                                    {(staffData?.tasks.length || 0) !== 1 ? "s" : ""}
+                                  <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mt-1">
+                                    <div
+                                      className={`h-full ${burdenBarStyle.className} rounded-full`}
+                                      style={{ width: burdenBarStyle.width }}
+                                    ></div>
                                   </div>
-                                </div>
-                                <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden mt-1">
-                                  <div
-                                    className={`h-full ${burdenBarStyle.className} rounded-full`}
-                                    style={{ width: burdenBarStyle.width }}
-                                  ></div>
                                 </div>
                               </div>
                             </div>
-                          </div>
 
-                          <div className="relative h-16">
-                            <div
-                              className="grid absolute inset-0"
-                              style={{
-                                gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
-                              }}
-                            >
-                              {days.map((day) => (
-                                <div
-                                  key={day.toString()}
-                                  className={`border-r last:border-r-0 h-full ${
-                                    isSameDay(day, new Date()) ? "bg-muted/50" : ""
-                                  }`}
-                                ></div>
-                              ))}
-                            </div>
-
-                            {/* Summary task bar when collapsed */}
-                            {hasAssignedWork && !expandedStaff.includes(staffId) && (
+                            <div className="relative h-16">
                               <div
-                                className="absolute h-6 rounded-sm bg-primary/20 border border-primary/30 top-5 flex items-center justify-center text-xs font-medium"
+                                className="grid absolute inset-0"
                                 style={{
-                                  left: `${Math.max(
-                                    0,
-                                    Math.floor(
-                                      (new Date(getStaffTaskDateRange(staffData!.tasks).earliest).getTime() -
-                                        startDate.getTime()) /
-                                        (24 * 60 * 60 * 1000),
-                                    ) * columnWidth,
-                                  )}px`,
-                                  width: `${Math.max(
-                                    columnWidth,
-                                    Math.ceil(
-                                      (new Date(getStaffTaskDateRange(staffData!.tasks).latest).getTime() -
-                                        new Date(getStaffTaskDateRange(staffData!.tasks).earliest).getTime()) /
-                                        (24 * 60 * 60 * 1000),
-                                    ) * columnWidth,
-                                  )}px`,
+                                  gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
                                 }}
                               >
-                                {staffData!.tasks.length} task{staffData!.tasks.length !== 1 ? "s" : ""}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Tasks for this staff member (if expanded) */}
-                        {hasAssignedWork && expandedStaff.includes(staffId) && (
-                          <div className="divide-y divide-border/50">
-                            {staffData!.tasks.map((task) => (
-                              <div key={`task-${task.id}`} className="bg-muted/5">
-                                <div className="grid grid-cols-[250px_1fr]">
+                                {days.map((day) => (
                                   <div
-                                    className="p-3 pl-16 font-medium border-r flex items-center gap-2 sticky left-0 bg-background/95 z-10"
-                                    onClick={() => openTaskDetail(task)}
-                                  >
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className={cn(
-                                        "h-5 w-5 p-0 transition-transform",
-                                        expandedTasks[staffId]?.includes(task.id) && "rotate-90",
-                                      )}
-                                      onClick={(e) => toggleTaskExpansion(staffId, task.id, e)}
-                                      disabled={!task.subtasks || task.subtasks.length === 0}
-                                    >
-                                      {task.subtasks && task.subtasks.length > 0 && (
-                                        <ChevronRight className="h-4 w-4" />
-                                      )}
-                                    </Button>
+                                    key={day.toString()}
+                                    className={`border-r last:border-r-0 h-full ${
+                                      isSameDay(day, new Date()) ? "bg-muted/50" : ""
+                                    }`}
+                                  ></div>
+                                ))}
+                              </div>
 
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-1">
-                                        <ProgressIndicator status={task.status} size="sm" />
-                                        <span className="text-sm truncate">{task.title}</span>
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">
-                                        Burden: {(task.complexity + task.workload).toFixed(1)}
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <div className="relative h-12">
-                                    <div
-                                      className="grid absolute inset-0"
-                                      style={{
-                                        gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
-                                      }}
-                                    >
-                                      {days.map((day) => (
-                                        <div
-                                          key={day.toString()}
-                                          className={`border-r last:border-r-0 h-full ${
-                                            isSameDay(day, new Date()) ? "bg-muted/50" : ""
-                                          }`}
-                                        ></div>
-                                      ))}
-                                    </div>
-
-                                    {/* Task bar */}
-                                    <TaskBar
-                                      task={task}
-                                      startDate={startDate}
-                                      endDate={endDate}
-                                      onClick={() => openTaskDetail(task)}
-                                      isParent={true}
-                                      columnWidth={columnWidth}
-                                    />
-                                  </div>
+                              {/* Summary task bar when collapsed */}
+                              {hasAssignedWork && !expandedStaff.includes(staffId) && (
+                                <div
+                                  className="absolute h-6 rounded-sm bg-primary/20 border border-primary/30 top-5 flex items-center justify-center text-xs font-medium"
+                                  style={{
+                                    left: `${Math.max(
+                                      0,
+                                      differenceInDays(getStaffTaskDateRange(staffData!.tasks).earliest, startDate) *
+                                        columnWidth,
+                                    )}px`,
+                                    width: `${Math.max(
+                                      columnWidth,
+                                      (differenceInDays(
+                                        getStaffTaskDateRange(staffData!.tasks).latest,
+                                        getStaffTaskDateRange(staffData!.tasks).earliest,
+                                      ) +
+                                        1) *
+                                        columnWidth,
+                                    )}px`,
+                                  }}
+                                >
+                                  {staffData!.tasks.length} task{staffData!.tasks.length !== 1 ? "s" : ""}
                                 </div>
+                              )}
+                            </div>
+                          </div>
 
-                                {/* Subtasks for this task (if expanded) */}
-                                {task.subtasks && expandedTasks[staffId]?.includes(task.id) && (
-                                  <div className="divide-y divide-border/50">
-                                    {task.subtasks.map((subtask) => (
-                                      <div key={`subtask-${subtask.id}`} className="bg-muted/10">
-                                        <div className="grid grid-cols-[250px_1fr]">
-                                          <div
-                                            className="p-3 pl-24 font-medium border-r flex items-center gap-2 sticky left-0 bg-background/95 z-10"
-                                            onClick={() => openSubtaskDetail(subtask)}
-                                          >
-                                            <div className="flex-1 min-w-0">
-                                              <div className="flex items-center gap-1">
-                                                <ProgressIndicator status={subtask.status} size="sm" />
-                                                <span className="text-sm truncate">{subtask.title}</span>
-                                              </div>
-                                            </div>
-                                          </div>
+                          {/* Tasks for this staff member (if expanded) */}
+                          {hasAssignedWork && expandedStaff.includes(staffId) && (
+                            <div className="divide-y divide-border/50">
+                              {staffData!.tasks.map((task) => (
+                                <div key={`task-${task.id}`} className="bg-muted/5">
+                                  <div className="grid grid-cols-[250px_1fr]">
+                                    <div
+                                      className="p-3 pl-16 font-medium border-r flex items-center gap-2 sticky left-0 bg-background/95 z-10"
+                                      onClick={() => openTaskDetail(task)}
+                                    >
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className={cn(
+                                          "h-5 w-5 p-0 transition-transform",
+                                          expandedTasks[staffId]?.includes(task.id) && "rotate-90",
+                                        )}
+                                        onClick={(e) => toggleTaskExpansion(staffId, task.id, e)}
+                                        disabled={!task.subtasks || task.subtasks.length === 0}
+                                      >
+                                        {task.subtasks && task.subtasks.length > 0 && (
+                                          <ChevronRight className="h-4 w-4" />
+                                        )}
+                                      </Button>
 
-                                          <div className="relative h-10">
-                                            <div
-                                              className="grid absolute inset-0"
-                                              style={{
-                                                gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
-                                              }}
-                                            >
-                                              {days.map((day) => (
-                                                <div
-                                                  key={day.toString()}
-                                                  className={`border-r last:border-r-0 h-full ${
-                                                    isSameDay(day, new Date()) ? "bg-muted/50" : ""
-                                                  }`}
-                                                ></div>
-                                              ))}
-                                            </div>
-
-                                            {/* Subtask bar */}
-                                            <TaskBar
-                                              task={subtask}
-                                              startDate={startDate}
-                                              endDate={endDate}
-                                              onClick={() => openSubtaskDetail(subtask)}
-                                              isParent={false}
-                                              columnWidth={columnWidth}
-                                            />
-                                          </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-1">
+                                          <ProgressIndicator status={task.status} size="sm" />
+                                          <span className="text-sm truncate">{task.title}</span>
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                          Burden: {(task.complexity + task.workload).toFixed(1)}
                                         </div>
                                       </div>
-                                    ))}
+                                    </div>
+
+                                    <div className="relative h-12">
+                                      <div
+                                        className="grid absolute inset-0"
+                                        style={{
+                                          gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
+                                        }}
+                                      >
+                                        {days.map((day) => (
+                                          <div
+                                            key={day.toString()}
+                                            className={`border-r last:border-r-0 h-full ${
+                                              isSameDay(day, new Date()) ? "bg-muted/50" : ""
+                                            }`}
+                                          ></div>
+                                        ))}
+                                      </div>
+
+                                      {/* Task bar */}
+                                      <TaskBar
+                                        task={task}
+                                        startDate={startDate}
+                                        endDate={endDate}
+                                        onClick={() => openTaskDetail(task)}
+                                        isParent={true}
+                                        columnWidth={columnWidth}
+                                      />
+                                    </div>
                                   </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })
-                  .filter(Boolean) // Filter out null values (staff with no tasks)
-              )}
+
+                                  {/* Subtasks for this task (if expanded) */}
+                                  {task.subtasks && expandedTasks[staffId]?.includes(task.id) && (
+                                    <div className="divide-y divide-border/50">
+                                      {task.subtasks.map((subtask) => (
+                                        <div key={`subtask-${subtask.id}`} className="bg-muted/10">
+                                          <div className="grid grid-cols-[250px_1fr]">
+                                            <div
+                                              className="p-3 pl-24 font-medium border-r flex items-center gap-2 sticky left-0 bg-background/95 z-10"
+                                              onClick={() => openSubtaskDetail(subtask)}
+                                            >
+                                              <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-1">
+                                                  <ProgressIndicator status={subtask.status} size="sm" />
+                                                  <span className="text-sm truncate">{subtask.title}</span>
+                                                </div>
+                                              </div>
+                                            </div>
+
+                                            <div className="relative h-10">
+                                              <div
+                                                className="grid absolute inset-0"
+                                                style={{
+                                                  gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
+                                                }}
+                                              >
+                                                {days.map((day) => (
+                                                  <div
+                                                    key={day.toString()}
+                                                    className={`border-r last:border-r-0 h-full ${
+                                                      isSameDay(day, new Date()) ? "bg-muted/50" : ""
+                                                    }`}
+                                                  ></div>
+                                                ))}
+                                              </div>
+
+                                              {/* Subtask bar */}
+                                              <TaskBar
+                                                task={subtask}
+                                                startDate={startDate}
+                                                endDate={endDate}
+                                                onClick={() => openSubtaskDetail(subtask)}
+                                                isParent={false}
+                                                columnWidth={columnWidth}
+                                              />
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                    .filter(Boolean) // Filter out null values (staff with no tasks)
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      </CardContent>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <>
+      {content}
 
       {/* Task and subtask dialogs */}
       {selectedTask && !isDeleting && (
@@ -854,6 +891,6 @@ export default function PeopleGanttChart() {
       )}
 
       {showTaskCreation && <TaskCreationDialog onClose={() => setShowTaskCreation(false)} />}
-    </Card>
+    </>
   )
 }

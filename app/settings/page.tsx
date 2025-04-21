@@ -3,24 +3,18 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
-import { useWorkspace } from "@/contexts/workspace-context"
 
-export default function WorkspaceSettingsPage() {
+export default function SettingsPage() {
   const { user, loading } = useAuth()
-  const { userRole } = useWorkspace()
   const router = useRouter()
 
   useEffect(() => {
     if (!loading && !user) {
       router.push("/login")
     } else if (!loading && user) {
-      if (userRole !== "owner") {
-        router.push("/")
-      } else {
-        router.push("/workspace/settings/profile")
-      }
+      router.push("/profile")
     }
-  }, [loading, user, userRole, router])
+  }, [loading, user, router])
 
   return null // Loading handled by layout
 }

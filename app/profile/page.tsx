@@ -12,6 +12,7 @@ import { updateUserProfile } from "@/lib/firebase/auth"
 import { ArrowLeft } from "lucide-react"
 import { formatName } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 
 export default function ProfilePage() {
   const { user, loading, setUser } = useAuth()
@@ -22,10 +23,36 @@ export default function ProfilePage() {
   const [fullName, setFullName] = useState("")
   const [preferredName, setPreferredName] = useState("")
   const [role, setRole] = useState("")
+  const [department, setDepartment] = useState("")
+  const [bio, setBio] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [nameOptions, setNameOptions] = useState<string[]>([])
+  const [hasMounted, setHasMounted] = useState(false)
 
   useEffect(() => {
+    setHasMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (!hasMounted) {
+      return
+    }
+
+    // Set the correct tab value when on profile page
+    const tabsList = document.querySelector('[role="tablist"]')
+    if (tabsList) {
+      const profileTab = tabsList.querySelector('[value="profile"]')
+      if (profileTab) {
+        ;(profileTab as HTMLElement).click()
+      }
+    }
+  }, [hasMounted])
+
+  useEffect(() => {
+    if (!hasMounted) {
+      return
+    }
+
     if (!loading && !user) {
       router.push("/login")
     }
@@ -37,6 +64,8 @@ export default function ProfilePage() {
       setFullName(currentName)
       setPreferredName(user.preferredName || "")
       setRole(user.role || "")
+      setDepartment(user.department || "")
+      setBio(user.bio || "")
 
       // Generate name options from the full name
       if (currentName) {
@@ -44,7 +73,7 @@ export default function ProfilePage() {
         setNameOptions(nameParts)
       }
     }
-  }, [user, loading, router])
+  }, [user, loading, router, hasMounted])
 
   const handleNameChange = (value: string) => {
     setName(value)
@@ -81,6 +110,8 @@ export default function ProfilePage() {
         preferredName,
         fullName,
         formattedName,
+        department,
+        bio,
       })
 
       // Update local user state
@@ -91,6 +122,8 @@ export default function ProfilePage() {
         preferredName,
         fullName,
         formattedName,
+        department,
+        bio,
       })
 
       toast({
@@ -109,7 +142,7 @@ export default function ProfilePage() {
     }
   }
 
-  if (loading || !user) {
+  if (loading || !user || !hasMounted) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
@@ -175,6 +208,27 @@ export default function ProfilePage() {
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
                 placeholder="e.g. Project Manager, Developer"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="department">Department</Label>
+              <Input
+                id="department"
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+                placeholder="e.g. Engineering, Marketing"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="bio">Bio</Label>
+              <Textarea
+                id="bio"
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                placeholder="Tell us a bit about yourself"
+                rows={3}
               />
             </div>
 

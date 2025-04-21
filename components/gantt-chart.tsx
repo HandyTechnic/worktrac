@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
-import { format, addDays, subDays, eachDayOfInterval, isSameDay } from "date-fns"
+import { format, addDays, subDays, eachDayOfInterval, isSameDay, startOfDay, endOfDay } from "date-fns"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -65,8 +65,8 @@ export default function GanttChart() {
   const daysToShow = DAYS_PER_ZOOM[zoomLevel - 1]
 
   // Calculate start and end dates based on center date and zoom level
-  const startDate = subDays(centerDate, Math.floor(daysToShow / 2))
-  const endDate = addDays(centerDate, Math.ceil(daysToShow / 2))
+  const startDate = startOfDay(subDays(centerDate, Math.floor(daysToShow / 2)))
+  const endDate = endOfDay(addDays(centerDate, Math.ceil(daysToShow / 2)))
 
   // Generate array of days for the header
   const days = eachDayOfInterval({ start: startDate, end: endDate })
@@ -248,10 +248,10 @@ export default function GanttChart() {
   }
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden border-0 shadow-none">
       <CardContent className="p-0">
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-xl font-semibold">Team Schedule</h2>
+        <div className="flex items-center justify-between p-2 border-b">
+          <h2 className="text-lg font-semibold">Team Schedule</h2>
           <div className="flex items-center gap-2">
             {/* Zoom controls */}
             <div className="flex items-center gap-2 mr-2">
@@ -285,18 +285,21 @@ export default function GanttChart() {
         <div className="overflow-x-auto w-full max-h-[calc(100vh-250px)] overflow-y-auto" ref={containerRef}>
           <div className="min-w-[800px]">
             {/* Header with days */}
-            <div className="grid grid-cols-[250px_1fr] border-b">
-              <div className="p-3 font-medium border-r sticky left-0 bg-background z-10">Task / Assignee</div>
+            <div className="grid grid-cols-[250px_1fr] border-b bg-card">
+              <div className="p-3 font-medium border-r sticky left-0 bg-background z-10 flex items-center">
+                <span className="text-sm">Task / Assignee</span>
+              </div>
               <div className="grid" style={{ gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)` }}>
                 {days.map((day) => (
                   <div
                     key={day.toString()}
-                    className={`p-3 text-center text-sm font-medium border-r last:border-r-0 ${
-                      isSameDay(day, new Date()) ? "bg-muted" : ""
-                    }`}
+                    className={cn(
+                      "p-3 text-center text-xs font-medium border-r last:border-r-0",
+                      isSameDay(day, new Date()) ? "bg-primary/10" : "",
+                    )}
                   >
-                    <div>{format(day, "EEE")}</div>
-                    <div>{format(day, "MMM d")}</div>
+                    <div className="font-medium">{format(day, "EEE")}</div>
+                    <div className="text-muted-foreground">{format(day, "MMM d")}</div>
                   </div>
                 ))}
               </div>
@@ -317,9 +320,9 @@ export default function GanttChart() {
                 filteredTasks.map((task) => (
                   <div key={task.id} className="group">
                     {/* Parent task row */}
-                    <div className="grid grid-cols-[250px_1fr] border-b">
+                    <div className="grid grid-cols-[250px_1fr] border-b hover:bg-muted/30 transition-colors">
                       <div
-                        className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10"
+                        className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10 cursor-pointer"
                         onClick={() => openTaskDetail(task)}
                       >
                         <Button
@@ -370,6 +373,7 @@ export default function GanttChart() {
                           onClick={() => openTaskDetail(task)}
                           isParent={true}
                           columnWidth={columnWidth}
+                          className="shadow-sm hover:shadow-md transition-shadow"
                         />
                       </div>
                     </div>

@@ -1,46 +1,59 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useWorkspace } from "@/contexts/workspace-context"
+import { PageLayout } from "@/components/page-layout"
 import GanttChart from "@/components/gantt-chart"
 import PeopleGanttChart from "@/components/people-gantt-chart"
-import { useAuth } from "@/contexts/auth-context"
-import { useWorkspace } from "@/contexts/workspace-context"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function GanttPage() {
-  const { user } = useAuth()
-  const { currentWorkspace } = useWorkspace()
-  const [view, setView] = useState<"tasks" | "people">("tasks")
+  const { userRole } = useWorkspace()
+  const isOwner = userRole === "owner"
+  const [activeView, setActiveView] = useState(isOwner ? "people" : "tasks")
 
-  // Set default view based on user role
+  // Set default view based on role and URL parameters
   useEffect(() => {
-    // Check if user is a workspace owner or manager
-    const isOwnerOrManager = user?.userRole === "owner" || user?.userRole === "admin" || user?.userRole === "manager"
+    // Check if there's a view parameter in the URL
+    const searchParams = new URLSearchParams(window.location.search)
+    const viewParam = searchParams.get("view")
 
-    // Set default view based on role
-    setView(isOwnerOrManager ? "people" : "tasks")
-
-    // Hide people view option for regular members
-    if (!isOwnerOrManager && view === "people") {
-      setView("tasks")
+    if (viewParam === "people" || viewParam === "tasks") {
+      setActiveView(viewParam)
+      localStorage.setItem("ganttView", viewParam)
+    } else {
+      // Check if there's a saved preference
+      const savedView = localStorage.getItem("ganttView")
+      if (savedView) {
+        setActiveView(savedView)
+      } else if (isOwner) {
+        setActiveView("people")
+      }
     }
-  }, [user, view])
+  }, [isOwner])
+
+  // Save view preference
+  const handleViewChange = (view) => {
+    setActiveView(view)
+    localStorage.setItem("ganttView", view)
+  }
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-center justify-between p-4 border-b">
-        <h1 className="text-2xl font-bold">Gantt Chart</h1>
-        <Tabs value={view} onValueChange={(v) => setView(v as "tasks" | "people")}>
-          <TabsList>
-            <TabsTrigger value="tasks">Tasks View</TabsTrigger>
-            {(user?.userRole === "owner" || user?.userRole === "admin" || user?.userRole === "manager") && (
-              <TabsTrigger value="people">People View</TabsTrigger>
-            )}
+    <PageLayout title="Gantt Chart" description="Visualize project timeline and task dependencies" fullWidth>
+      <div className="p-4">
+        <Tabs value={activeView} onValueChange={handleViewChange} className="w-full">
+          <TabsList className="mb-4">
+            {(!isOwner || activeView === "tasks") && <TabsTrigger value="tasks">Tasks View</TabsTrigger>}
+            <TabsTrigger value="people">People View</TabsTrigger>
           </TabsList>
+          <TabsContent value="tasks" className="mt-0">
+            <GanttChart />
+          </TabsContent>
+          <TabsContent value="people" className="mt-0">
+            <PeopleGanttChart />
+          </TabsContent>
         </Tabs>
-      </header>
-
-      {view === "tasks" ? <GanttChart /> : <PeopleGanttChart />}
-    </div>
+      </div>
+    </PageLayout>
   )
 }

@@ -3,22 +3,20 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
-import { useWorkspace } from "@/contexts/workspace-context"
-import WorkspaceMembers from "@/components/workspace-members"
 import { PageLayout } from "@/components/page-layout"
+import MyTasks from "@/components/my-tasks"
 
-export default function WorkspaceMembersPage() {
-  const { user, loading: authLoading } = useAuth()
-  const { currentWorkspace, userRole, loading: workspaceLoading } = useWorkspace()
+export default function MyTasksPage() {
+  const { user, loading } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (!loading && !user) {
       router.push("/login")
     }
-  }, [authLoading, user, router])
+  }, [loading, user, router])
 
-  if (authLoading || workspaceLoading || !user || !currentWorkspace) {
+  if (loading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center w-full">
         <div className="text-center">
@@ -30,8 +28,8 @@ export default function WorkspaceMembersPage() {
   }
 
   return (
-    <PageLayout title="Workspace Members" description="Manage team members and permissions">
-      <WorkspaceMembers />
+    <PageLayout title="My Tasks" description="View and manage your assigned tasks">
+      <MyTasks />
     </PageLayout>
   )
 }

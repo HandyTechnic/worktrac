@@ -4,12 +4,16 @@ import { ClientLayout } from "@/components/client-layout"
 
 const inter = Inter({ subsets: ["latin"] })
 
+export const metadata = {
+  title: "WorkTrac - Team Work Management",
+  description: "A collaborative work management application with Gantt chart interface",
+    generator: 'v0.dev'
+}
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <title>WorkTrac - Team Work Management</title>
-        <meta name="description" content="A collaborative work management application with Gantt chart interface" />
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#4f46e5" />
       </head>
@@ -19,10 +23,3 @@ export default function RootLayout({ children }) {
     </html>
   )
 }
-
-
-import './globals.css'
-
-export const metadata = {
-      generator: 'v0.dev'
-    };

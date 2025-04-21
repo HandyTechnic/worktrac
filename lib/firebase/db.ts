@@ -60,6 +60,44 @@ export async function getTask(taskId: string): Promise<Task | null> {
       return null
     }
 
+    // Check if this is a subtask by looking for a "-sub-" in the ID
+    // Safely check if taskId is defined and is a string before using indexOf
+    const isSubtask = taskId && typeof taskId === "string" && taskId.indexOf("-sub-") !== -1
+
+    if (isSubtask) {
+      // This is a subtask, we need to extract the parent ID and get the subtask from it
+      const parentId = taskId.split("-sub-")[0]
+      console.log(`This appears to be a subtask. Parent task ID: ${parentId}`)
+
+      // Get the parent task
+      const parentTaskRef = doc(db, "tasks", parentId)
+      const parentTaskDoc = await getDoc(parentTaskRef)
+
+      if (!parentTaskDoc.exists()) {
+        console.log(`Parent task with ID ${parentId} not found`)
+        return null
+      }
+
+      const parentTask = parentTaskDoc.data()
+
+      // Find the subtask in the parent's subtasks array
+      if (parentTask.subtasks && Array.isArray(parentTask.subtasks)) {
+        const subtask = parentTask.subtasks.find((st: any) => st.id === taskId)
+
+        if (subtask) {
+          // Return the subtask with additional parent info
+          return {
+            ...subtask,
+            parentId,
+            id: taskId,
+          } as Task
+        }
+      }
+
+      console.log(`Subtask with ID ${taskId} not found in parent task`)
+      return null
+    }
+
     return { id: taskDoc.id, ...taskDoc.data() } as Task
   } catch (error) {
     console.error("Error getting task:", error)

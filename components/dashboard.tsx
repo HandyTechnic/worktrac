@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
 import { Plus, CheckCircle, Clock, AlertCircle } from "lucide-react"
-import { calculateBurdenScore, calculateTaskBurden } from "@/lib/utils"
+import { calculateTaskBurden } from "@/lib/utils"
 import { ProgressIndicator } from "@/components/progress-indicator"
 import { addDays } from "date-fns"
 import TaskCreationDialog from "@/components/task-creation-dialog"
@@ -75,8 +75,31 @@ export default function Dashboard() {
 
   // Get staff with highest burden
   const staffBurdens = staffMembers.map((staff) => {
-    const burdenScore = calculateBurdenScore(staff.id)
-    return { ...staff, burdenScore }
+    // Calculate burden for each staff member using their tasks
+    const staffTasks = tasks?.filter((task) => task.assigneeIds.includes(staff.id)) || []
+
+    // Calculate total burden
+    let totalBurden = 0
+    let activeTaskCount = 0
+
+    staffTasks.forEach((task) => {
+      if (task.status !== "approved" && task.status !== "completed") {
+        const taskBurden = calculateTaskBurden(task)
+        // Adjust burden for multi-assignee tasks
+        const adjustedBurden = taskBurden / task.assigneeIds.length
+        totalBurden += adjustedBurden
+        activeTaskCount++
+      }
+    })
+
+    // Calculate average burden
+    const burdenScore = activeTaskCount > 0 ? Number.parseFloat((totalBurden / activeTaskCount).toFixed(1)) : 0
+
+    return {
+      ...staff,
+      burdenScore,
+      activeTaskCount,
+    }
   })
 
   const sortedStaff = [...staffBurdens].sort((a, b) => b.burdenScore - a.burdenScore)

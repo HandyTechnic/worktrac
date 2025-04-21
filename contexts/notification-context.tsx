@@ -72,11 +72,35 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const notificationsList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          createdAt: doc.data().createdAt?.toDate() || new Date(),
-        })) as Notification[]
+        const notificationsList = snapshot.docs.map((doc) => {
+          const data = doc.data()
+          let createdAtDate: Date
+
+          // Safely handle the createdAt field
+          if (data.createdAt && typeof data.createdAt.toDate === "function") {
+            // It's a Firestore Timestamp
+            createdAtDate = data.createdAt.toDate()
+          } else if (data.createdAt instanceof Date) {
+            // It's already a Date
+            createdAtDate = data.createdAt
+          } else if (data.createdAt) {
+            // It might be a timestamp number or string
+            try {
+              createdAtDate = new Date(data.createdAt)
+            } catch (e) {
+              createdAtDate = new Date() // Fallback to current date
+            }
+          } else {
+            // No createdAt field
+            createdAtDate = new Date() // Fallback to current date
+          }
+
+          return {
+            id: doc.id,
+            ...data,
+            createdAt: createdAtDate,
+          }
+        }) as Notification[]
 
         // Sort by date, newest first
         notificationsList.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())

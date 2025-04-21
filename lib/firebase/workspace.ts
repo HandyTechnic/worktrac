@@ -569,3 +569,17 @@ export async function inviteToWorkspace(
     throw error
   }
 }
+
+// Update workspace permissions
+export async function updateWorkspacePermissions(workspaceId: string, permissions: any): Promise<void> {
+  try {
+    const workspaceRef = doc(db, "workspaces", workspaceId)
+    await updateDoc(workspaceRef, {
+      permissions: permissions,
+      updatedAt: serverTimestamp(),
+    })
+  } catch (error) {
+    console.error("Error updating workspace permissions:", error)
+    throw error
+  }
+}

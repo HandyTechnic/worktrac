@@ -1,6 +1,6 @@
 "use client"
 
-import { differenceInDays, isBefore, isAfter, max, min } from "date-fns"
+import { differenceInDays, isBefore, isAfter, max, min, startOfDay, endOfDay } from "date-fns"
 import { Progress } from "@/components/ui/progress"
 import { ProgressIndicator } from "@/components/progress-indicator"
 import type { Task, SubTask } from "@/lib/types"
@@ -26,8 +26,8 @@ export default function TaskBar({
   // Calculate position and width of the task bar
   const calculatePosition = () => {
     // Ensure task dates are within the visible range
-    const taskStart = new Date(task.startDate)
-    const taskEnd = new Date(task.endDate)
+    const taskStart = startOfDay(new Date(task.startDate))
+    const taskEnd = endOfDay(new Date(task.endDate))
 
     // If task is completely outside the visible range, don't render
     if (isAfter(taskStart, endDate) || isBefore(taskEnd, startDate)) {
@@ -38,12 +38,12 @@ export default function TaskBar({
     const visibleStart = max([taskStart, startDate])
     const visibleEnd = min([taskEnd, endDate])
 
-    // Calculate days from start and task duration
+    // Calculate days from start and task duration in days
     const daysFromStart = differenceInDays(visibleStart, startDate)
-    const visibleDuration = differenceInDays(visibleEnd, visibleStart) + 1
 
-    // Calculate total days in the view
-    const totalDays = differenceInDays(endDate, startDate) + 1
+    // Calculate the width based on the difference between visible end and start
+    // Add 1 because the end date is inclusive (a task that starts and ends on the same day should be 1 day wide)
+    const visibleDuration = differenceInDays(visibleEnd, visibleStart) + 1
 
     // Calculate left position and width in pixels
     const left = daysFromStart * columnWidth
