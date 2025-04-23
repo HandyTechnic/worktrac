@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { createContext, useContext, useEffect, useState, useCallback } from "react"
-import { subscribeToTasks, createTask, updateTask, deleteTask as deleteTaskFromDB } from "@/lib/firebase/db"
+import { subscribeToTasks, updateTask, deleteTask as deleteTaskFromDB } from "@/lib/firebase/db"
 import type { Task } from "@/lib/types"
 import { useAuth } from "@/contexts/auth-context"
 import { useWorkspace } from "@/contexts/workspace-context"
@@ -11,7 +11,8 @@ import { doc, getDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase/config"
 import { getWorkspaceMembers } from "@/lib/firebase/workspace"
 import { sendNotification } from "@/lib/notification-service"
-import { createTaskInvitation } from "@/lib/firebase/task-invitations"
+import { createTaskWithSubtasks } from "@/lib/firebase/db"
+import { getSubtasksByParent } from "@/lib/firebase/subtasks"
 
 const TaskContext = createContext<
   | {
@@ -47,41 +48,71 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     console.log(`Loading tasks for workspace: ${currentWorkspace.id}`)
+    setLoading(true)
 
     const unsubscribe = subscribeToTasks(
       currentWorkspace.id,
-      (snapshot) => {
-        const allTasks: Task[] = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Task[]
-        console.log(`Loaded ${allTasks.length} tasks from Firebase`)
+      async (snapshot) => {
+        try {
+          // Get basic task data from the snapshot
+          const taskPromises = snapshot.docs.map(async (doc) => {
+            const taskData = doc.data()
+            const taskId = doc.id
 
-        // Filter tasks based on user permissions
-        let filteredTasks: Task[]
+            // Fetch subtasks for this task if it has subtaskIds
+            let subtasks = []
+            if (taskData.subtaskIds && taskData.subtaskIds.length > 0) {
+              console.log(`Fetching ${taskData.subtaskIds.length} subtasks for task ${taskId}`)
+              subtasks = await getSubtasksByParent(taskId)
 
-        // Owners, admins, and managers see all tasks
-        if (userRole === "owner" || userRole === "admin" || userRole === "manager") {
-          filteredTasks = allTasks
-        } else {
-          // Regular members only see tasks they're assigned to
-          filteredTasks = allTasks.filter((task) => {
-            // Include task if user is directly assigned
-            if (task.assigneeIds?.includes(user.id)) {
-              return true
+              // Add the parentId to each subtask explicitly
+              subtasks = subtasks.map((subtask) => ({
+                ...subtask,
+                parentId: taskId,
+              }))
             }
 
-            // Include task if user is assigned to any subtask
-            if (task.subtasks && task.subtasks.some((subtask) => subtask.assigneeIds?.includes(user.id))) {
-              return true
-            }
-
-            return false
+            return {
+              id: taskId,
+              ...taskData,
+              subtasks: subtasks || [],
+            } as Task
           })
-        }
 
-        setTasks(filteredTasks)
-        setLoading(false)
+          // Wait for all task data to be loaded with their subtasks
+          const allTasks = await Promise.all(taskPromises)
+          console.log(`Loaded ${allTasks.length} tasks with subtasks from Firebase`)
+
+          // Filter tasks based on user permissions
+          let filteredTasks: Task[]
+
+          // Owners, admins, and managers see all tasks
+          if (userRole === "owner" || userRole === "admin" || userRole === "manager") {
+            filteredTasks = allTasks
+          } else {
+            // Regular members only see tasks they're assigned to
+            filteredTasks = allTasks.filter((task) => {
+              // Include task if user is directly assigned
+              if (task.assigneeIds?.includes(user.id)) {
+                return true
+              }
+
+              // Include task if user is assigned to any subtask
+              if (task.subtasks && task.subtasks.some((subtask) => subtask.assigneeIds?.includes(user.id))) {
+                return true
+              }
+
+              return false
+            })
+          }
+
+          setTasks(filteredTasks)
+          setLoading(false)
+        } catch (error) {
+          console.error("Error processing tasks:", error)
+          setTasks([]) // Set to empty array on error
+          setLoading(false)
+        }
       },
       (error) => {
         console.error("Error fetching tasks:", error)
@@ -96,93 +127,98 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user, currentWorkspace, userRole])
 
-  // Update the addTask function to check permissions
+  // Update the addTask function in the context
   const addTask = useCallback(
-    async (task: Omit<Task, "id">) => {
-      if (!currentWorkspace) {
-        console.error("Workspace is not available.")
-        return
-      }
-
-      // Check if user has permission to create tasks
-      const isManager = userRole === "owner" || userRole === "admin" || userRole === "manager"
-      const workspaceSettings = currentWorkspace.settings || {}
-      const allowMembersToCreateTasks = workspaceSettings.permissions?.allowMembersToCreateTasks || false
-
-      if (!isManager && !allowMembersToCreateTasks) {
-        console.error("You don't have permission to create tasks.")
-        return
-      }
-
+    async (taskData) => {
       try {
-        // For regular members, ensure they can only assign themselves initially
-        const taskWithPermissions = { ...task }
+        setLoading(true)
 
-        if (!isManager) {
-          // Regular members can only assign themselves initially
-          taskWithPermissions.assigneeIds = [user?.id]
+        // Extract subtasks if they exist
+        const subtasks = taskData.subtasks || []
+        const taskWithoutSubtasks = { ...taskData }
+        delete taskWithoutSubtasks.subtasks
 
-          // For subtasks, apply the same permission logic
-          if (taskWithPermissions.subtasks && taskWithPermissions.subtasks.length > 0) {
-            taskWithPermissions.subtasks = taskWithPermissions.subtasks.map((subtask) => ({
-              ...subtask,
-              assigneeIds: [user?.id],
-            }))
-          }
-        }
+        // Create the task with subtasks
+        const taskId = await createTaskWithSubtasks(taskWithoutSubtasks, subtasks)
 
-        // Ensure the task has the current workspace ID
-        const taskWithWorkspace = {
-          ...taskWithPermissions,
-          workspaceId: currentWorkspace.id,
-        }
-
-        const taskId = await createTask(taskWithWorkspace)
-        console.log(`Created task with ID: ${taskId}`)
-
-        // If not a manager and trying to assign others, send invitations
-        if (!isManager && task.assigneeIds && task.assigneeIds.length > 0) {
-          const invitationAssignees = task.assigneeIds.filter((id) => id !== user?.id)
-
-          for (const assigneeId of invitationAssignees) {
-            try {
-              await createTaskInvitation(
-                taskId,
-                null, // No subtask
-                user?.id,
-                assigneeId,
-                currentWorkspace.id,
-              )
-
-              // Send notification
-              await sendNotification({
-                userId: assigneeId as string,
-                type: "task_invitation",
-                title: "Task Invitation",
-                message: `${user?.name || "A team member"} has invited you to join a task: "${task.title}"`,
-                actionUrl: `/task/${taskId}`,
-                relatedId: taskId,
-                metadata: {
-                  taskId,
-                  inviterId: user?.id,
-                  taskTitle: task.title,
-                },
-              })
-            } catch (error) {
-              console.error(`Error inviting user ${assigneeId} to task:`, error)
-            }
-          }
-        }
+        // Refresh tasks
+        await fetchTasks()
 
         return taskId
       } catch (error) {
         console.error("Error adding task:", error)
+        throw error
+      } finally {
+        setLoading(false)
       }
     },
     [currentWorkspace, userRole, user?.id, user?.name],
   )
 
-  // Update the handleUpdateTask function to check permissions
+  const fetchTasks = useCallback(async () => {
+    if (!user || !currentWorkspace) {
+      setTasks(null)
+      setLoading(false)
+      return
+    }
+
+    console.log(`Fetching tasks for workspace: ${currentWorkspace.id}`)
+
+    try {
+      const unsubscribe = subscribeToTasks(
+        currentWorkspace.id,
+        (snapshot) => {
+          const allTasks: Task[] = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          })) as Task[]
+          console.log(`Loaded ${allTasks.length} tasks from Firebase`)
+
+          // Filter tasks based on user permissions
+          let filteredTasks: Task[]
+
+          // Owners, admins, and managers see all tasks
+          if (userRole === "owner" || userRole === "admin" || userRole === "manager") {
+            filteredTasks = allTasks
+          } else {
+            // Regular members only see tasks they're assigned to
+            filteredTasks = allTasks.filter((task) => {
+              // Include task if user is directly assigned
+              if (task.assigneeIds?.includes(user.id)) {
+                return true
+              }
+
+              // Include task if user is assigned to any subtask
+              if (task.subtasks && task.subtasks.some((subtask) => subtask.assigneeIds?.includes(user.id))) {
+                return true
+              }
+
+              return false
+            })
+          }
+
+          setTasks(filteredTasks)
+          setLoading(false)
+        },
+        (error) => {
+          console.error("Error fetching tasks:", error)
+          setTasks([]) // Set to empty array on error
+          setLoading(false)
+        },
+      )
+
+      return () => {
+        console.log("Unsubscribing from tasks")
+        unsubscribe()
+      }
+    } catch (error) {
+      console.error("Error fetching tasks:", error)
+      setTasks([])
+      setLoading(false)
+    }
+  }, [user, currentWorkspace, userRole])
+
+  // Replace the handleUpdateTask function with this refactored version
   const handleUpdateTask = useCallback(
     async (taskId: string, taskData: Partial<Task>) => {
       try {
@@ -201,7 +237,7 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error("You don't have permission to update this task")
         }
 
-        // If this is a status change to "completed", check if we need to notify managers
+        // Handle notifications for status changes
         if (taskData.status === "completed" && currentTask.status !== "completed") {
           // If task requires approval, create a notification for managers
           if (currentTask.requiresApproval) {
@@ -317,8 +353,12 @@ export const TaskProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
+        // Remove subtasks from the update data to prevent circular updates
+        const taskDataWithoutSubtasks = { ...taskData }
+        delete taskDataWithoutSubtasks.subtasks
+
         // Perform the actual update
-        await updateTask(taskId, taskData)
+        await updateTask(taskId, taskDataWithoutSubtasks)
         console.log(`Updated task with ID: ${taskId}`)
       } catch (error) {
         console.error("Error updating task:", error)

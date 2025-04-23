@@ -60,6 +60,8 @@ export default function BurdenMatrix() {
 
     const today = startOfDay(new Date())
 
+    console.log(`Calculating burden scores for ${staffMembers.length} staff members with ${tasks.length} total tasks`)
+
     return staffMembers.map((staff) => {
       // Get current and future tasks for this staff member
       const staffTasks = tasks.filter(
@@ -69,17 +71,35 @@ export default function BurdenMatrix() {
           (isAfter(new Date(task.endDate), today) || isSameDay(new Date(task.endDate), today)),
       )
 
+      console.log(`Staff ${staff.name} (${staff.id}) has ${staffTasks.length} active tasks`)
+
+      // Log task details for debugging
+      staffTasks.forEach((task) => {
+        console.log(`Task ${task.id}: "${task.title}" - complexity: ${task.complexity}, workload: ${task.workload}`)
+      })
+
       // Calculate average burden
       let totalBurden = 0
 
       staffTasks.forEach((task) => {
+        // Ensure task has complexity and workload values
+        if (typeof task.complexity !== "number" || typeof task.workload !== "number") {
+          console.warn(`Task ${task.id} is missing complexity or workload values:`, task)
+          return // Skip this task
+        }
+
         const taskBurden = calculateTaskBurden(task)
         // Adjust burden for multi-assignee tasks
-        const adjustedBurden = taskBurden / task.assigneeIds.length
+        const adjustedBurden = taskBurden / (task.assigneeIds.length || 1)
         totalBurden += adjustedBurden
+
+        console.log(
+          `Task ${task.id} burden: ${adjustedBurden.toFixed(1)} (${taskBurden} / ${task.assigneeIds.length} assignees)`,
+        )
       })
 
       const burdenScore = staffTasks.length > 0 ? totalBurden / staffTasks.length : 0
+      console.log(`Final burden score for ${staff.name}: ${burdenScore.toFixed(1)}`)
 
       return {
         ...staff,

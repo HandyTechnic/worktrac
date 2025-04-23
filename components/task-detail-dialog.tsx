@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { useAuth } from "@/contexts/auth-context"
-import { updateTask, createTask } from "@/lib/firebase/db"
+import { updateTask, createTask, syncTaskCompletionFromSubtasks } from "@/lib/firebase/db"
 import { uploadFile } from "@/lib/firebase/storage"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { getAllUsers } from "@/lib/firebase/auth"
@@ -53,6 +53,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import type { Task, SubTask } from "@/lib/types"
+import { createSubtask, updateSubtask } from "@/lib/firebase/subtasks"
+import { getTask } from "@/lib/firebase/db"
 
 interface TaskDetailDialogProps {
   task: Task | SubTask
@@ -274,18 +276,49 @@ export default function TaskDetailDialog({ task, open, onClose, onUpdate, onDele
         file: fileData,
       }
 
-      // Create updated task object with the new ID if it wasn't there before
-      const updatedTask = {
+      // Determine if this is a task or subtask
+      if (isSubtask) {
+        // For subtasks, update only the subtask document
+        const updatedSubtask = {
+          ...task,
+          completion,
+          status,
+          updates: [...(task.updates || []), newUpdate],
+        }
+
+        // Remove any task-specific fields
+        delete updatedSubtask.subtasks
+
+        // Update the subtask
+        await updateSubtask(taskId, updatedSubtask)
+
+        // If this is a status change, sync the parent task's completion
+        if (status !== task.status && "parentId" in task) {
+          await syncTaskCompletionFromSubtasks(task.parentId)
+        }
+      } else {
+        // For tasks, update only the task document
+        const updatedTask = {
+          ...task,
+          completion,
+          status,
+          updates: [...(task.updates || []), newUpdate],
+        }
+
+        // Remove subtasks from the update data
+        delete updatedTask.subtasks
+
+        // Update the task
+        await updateTask(taskId, updatedTask, true)
+      }
+
+      // Notify parent component of the update
+      onUpdate(taskId, {
         ...task,
-        id: taskId, // Ensure the ID is included
         completion,
         status,
         updates: [...(task.updates || []), newUpdate],
-      }
-
-      // Use the updateTask function with createIfNotExists set to true
-      await updateTask(taskId, updatedTask, true)
-      onUpdate(taskId, updatedTask)
+      })
 
       // Reset form
       setUpdateText("")
@@ -313,6 +346,7 @@ export default function TaskDetailDialog({ task, open, onClose, onUpdate, onDele
         throw new Error("Task ID is not available. Please try again.")
       }
 
+      // Only update the task properties, not subtasks
       const updatedTask = {
         ...task,
         id: taskId, // Ensure the ID is included
@@ -323,7 +357,19 @@ export default function TaskDetailDialog({ task, open, onClose, onUpdate, onDele
         ...(isSubtask ? {} : { complexity, workload }),
       }
 
-      await updateTask(taskId, updatedTask, true)
+      // Remove subtasks from the update data
+      delete updatedTask.subtasks
+
+      // Update the task or subtask based on what we're editing
+      if (isSubtask) {
+        // For subtasks, use the updateSubtask function
+        await updateSubtask(taskId, updatedTask)
+      } else {
+        // For tasks, use the updateTask function
+        await updateTask(taskId, updatedTask, true)
+      }
+
+      // Notify parent component of the update
       onUpdate(taskId, updatedTask)
 
       setIsEditing(false)
@@ -390,11 +436,9 @@ export default function TaskDetailDialog({ task, open, onClose, onUpdate, onDele
         throw new Error("Task ID is not available. Please try again.")
       }
 
-      // Create subtasks
-      const subtasks = [
-        ...(task.subtasks || []),
-        ...newSubtasks.map((st) => ({
-          id: `${taskId}-sub-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      // Create subtasks using the new system
+      for (const st of newSubtasks) {
+        await createSubtask({
           parentId: taskId,
           title: st.title,
           assigneeIds: st.assigneeIds,
@@ -405,18 +449,14 @@ export default function TaskDetailDialog({ task, open, onClose, onUpdate, onDele
           requiresAcceptance: st.requiresAcceptance,
           creatorId: user?.id,
           workspaceId: task.workspaceId, // Ensure workspaceId is included
-        })),
-      ]
-
-      // Update task with new subtasks
-      const updatedTask = {
-        ...task,
-        id: taskId, // Ensure the ID is included
-        subtasks,
+        })
       }
 
-      await updateTask(taskId, updatedTask, true)
-      onUpdate(taskId, updatedTask)
+      // Refresh the task to get the updated subtasks
+      const updatedTask = await getTask(taskId)
+      if (updatedTask) {
+        onUpdate(taskId, updatedTask)
+      }
 
       // Reset form
       setNewSubtasks([])

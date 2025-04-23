@@ -33,6 +33,8 @@ import { useWorkspace } from "@/contexts/workspace-context"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { getAllUsers } from "@/lib/firebase/auth"
 import { Slider } from "@/components/ui/slider"
+import { updateSubtask } from "@/lib/firebase/subtasks"
+import { syncTaskCompletionFromSubtasks } from "@/lib/firebase/db"
 
 // Constants for zoom levels
 const MIN_ZOOM = 1 // Minimum zoom level (most zoomed out)
@@ -178,19 +180,28 @@ export default function GanttChart() {
 
   // Handle subtask update
   const handleSubtaskUpdate = async (subtaskId: string, parentId: string, updatedData: Partial<SubTask>) => {
+    console.log(`Updating subtask ${subtaskId} with data:`, updatedData)
     try {
-      // Find the parent task
-      const parentTask = tasks.find((task) => task.id === parentId)
+      // Directly update the subtask document without modifying the parent task
+      await updateSubtask(subtaskId, updatedData)
 
-      if (!parentTask) {
-        throw new Error("Parent task not found")
+      // Update the local state to reflect the changes
+      if (tasks) {
+        const updatedTasks = [...tasks].map((task) => {
+          if (task.id === parentId && task.subtasks) {
+            // Update the subtask in the local state
+            const updatedSubtasks = task.subtasks.map((st) => (st.id === subtaskId ? { ...st, ...updatedData } : st))
+            return { ...task, subtasks: updatedSubtasks }
+          }
+          return task
+        })
+
+        // No need to call setTasks as the real-time listener will update the state
+        // This is just for immediate UI feedback before the listener fires
+
+        // Optionally sync the parent task's completion based on subtasks
+        await syncTaskCompletionFromSubtasks(parentId)
       }
-
-      // Find and update the subtask in the parent's subtasks array
-      const updatedSubtasks = parentTask.subtasks.map((st) => (st.id === subtaskId ? { ...st, ...updatedData } : st))
-
-      // Update the parent task with the new subtasks array
-      await updateTask(parentId, { ...parentTask, subtasks: updatedSubtasks })
 
       toast({
         title: "Subtask Updated",
@@ -379,7 +390,7 @@ export default function GanttChart() {
                     </div>
 
                     {/* Subtasks (if expanded) */}
-                    {task.subtasks && expandedTasks.includes(task.id) && (
+                    {task.subtasks && task.subtasks.length > 0 && expandedTasks.includes(task.id) && (
                       <div className="relative">
                         {/* Vertical line from parent to subtasks */}
                         <div
@@ -390,74 +401,79 @@ export default function GanttChart() {
                           }}
                         />
 
-                        {task.subtasks.map((subtask, index) => (
-                          <div
-                            key={subtask.id}
-                            className="grid grid-cols-[250px_1fr] border-b last:border-b-0 bg-muted/5 relative"
-                          >
-                            {/* Horizontal line to subtask */}
-                            <div className="absolute left-6 w-8 h-px bg-border" style={{ top: "24px" }} />
+                        {task.subtasks.map((subtask, index) => {
+                          // Log subtask info for debugging
+                          console.log(`Rendering subtask ${subtask.id} for parent ${task.id}`, subtask)
 
+                          return (
                             <div
-                              className="p-3 font-medium border-r flex items-center gap-2 pl-16 sticky left-0 bg-background/95 z-10"
-                              onClick={() => {
-                                // Create a new object with the parentId explicitly set
-                                const subtaskWithParent = {
-                                  ...subtask,
-                                  parentId: task.id,
-                                }
-                                openSubtaskDetail(subtaskWithParent)
-                              }}
+                              key={subtask.id}
+                              className="grid grid-cols-[250px_1fr] border-b last:border-b-0 bg-muted/5 relative"
                             >
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1">
-                                  <ProgressIndicator status={subtask.status} size="sm" />
-                                  <span className="text-sm truncate">{subtask.title}</span>
-                                </div>
+                              {/* Horizontal line to subtask */}
+                              <div className="absolute left-6 w-8 h-px bg-border" style={{ top: "24px" }} />
 
-                                <div className="flex items-center text-xs text-muted-foreground mt-0.5">
-                                  <Users className="h-3 w-3 mr-1" />
-                                  <span className="truncate">
-                                    {formatAssignees(subtask.assigneeIds || [], staffMembers)}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div
-                              className="relative h-12"
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
-                              }}
-                            >
-                              {days.map((day) => (
-                                <div
-                                  key={day.toString()}
-                                  className={`border-r last:border-r-0 ${
-                                    isSameDay(day, new Date()) ? "bg-muted/50" : ""
-                                  }`}
-                                ></div>
-                              ))}
-
-                              {/* Subtask bar */}
-                              <TaskBar
-                                task={subtask}
-                                startDate={startDate}
-                                endDate={endDate}
+                              <div
+                                className="p-3 font-medium border-r flex items-center gap-2 pl-16 sticky left-0 bg-background/95 z-10"
                                 onClick={() => {
+                                  // Always ensure the parentId is set correctly
                                   const subtaskWithParent = {
                                     ...subtask,
                                     parentId: task.id,
                                   }
                                   openSubtaskDetail(subtaskWithParent)
                                 }}
-                                isParent={false}
-                                columnWidth={columnWidth}
-                              />
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1">
+                                    <ProgressIndicator status={subtask.status} size="sm" />
+                                    <span className="text-sm truncate">{subtask.title}</span>
+                                  </div>
+
+                                  <div className="flex items-center text-xs text-muted-foreground mt-0.5">
+                                    <Users className="h-3 w-3 mr-1" />
+                                    <span className="truncate">
+                                      {formatAssignees(subtask.assigneeIds || [], staffMembers)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div
+                                className="relative h-12"
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
+                                }}
+                              >
+                                {days.map((day) => (
+                                  <div
+                                    key={day.toString()}
+                                    className={`border-r last:border-r-0 ${
+                                      isSameDay(day, new Date()) ? "bg-muted/50" : ""
+                                    }`}
+                                  ></div>
+                                ))}
+
+                                {/* Subtask bar */}
+                                <TaskBar
+                                  task={subtask}
+                                  startDate={startDate}
+                                  endDate={endDate}
+                                  onClick={() => {
+                                    const subtaskWithParent = {
+                                      ...subtask,
+                                      parentId: task.id,
+                                    }
+                                    openSubtaskDetail(subtaskWithParent)
+                                  }}
+                                  isParent={false}
+                                  columnWidth={columnWidth}
+                                />
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </div>

@@ -11,6 +11,11 @@ export function cn(...inputs: ClassValue[]) {
 
 // Calculate task burden (complexity + workload)
 export function calculateTaskBurden(task: Task): number {
+  // The issue might be here - let's ensure we're handling undefined or null values
+  if (!task || typeof task.complexity !== "number" || typeof task.workload !== "number") {
+    console.warn("Invalid task data for burden calculation:", task)
+    return 0
+  }
   return Number.parseFloat((task.complexity + task.workload).toFixed(1))
 }
 
@@ -54,7 +59,7 @@ export function formatName(fullName: string, preferredName?: string): string {
   return formattedName
 }
 
-// Calculate burden score for a staff member (1-10 scale)
+// Also check the calculateBurdenScore function
 export function calculateBurdenScore(staffId: number | string): number {
   // Get all active tasks for this staff member from the tasks context
   const staffTasks = tasks.filter((task) => task.assigneeIds.includes(staffId) && task.status !== "approved")
@@ -79,7 +84,7 @@ export function calculateBurdenScore(staffId: number | string): number {
     const taskBurden = calculateTaskBurden(task)
 
     // For multi-assignee tasks, divide the burden by the number of assignees
-    const assigneeCount = task.assigneeIds.length
+    const assigneeCount = task.assigneeIds.length || 1 // Ensure we don't divide by zero
     const adjustedBurden = taskBurden / assigneeCount
 
     // Add to total burden

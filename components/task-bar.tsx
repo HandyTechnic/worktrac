@@ -13,6 +13,7 @@ interface TaskBarProps {
   onClick: () => void
   isParent?: boolean
   columnWidth?: number
+  className?: string
 }
 
 export default function TaskBar({
@@ -22,12 +23,30 @@ export default function TaskBar({
   onClick,
   isParent = false,
   columnWidth = 40,
+  className,
 }: TaskBarProps) {
+  // Add debug logging
+  console.log(`Rendering TaskBar for ${isParent ? "parent" : "subtask"} ${task.id}`, {
+    title: task.title,
+    startDate: task.startDate,
+    endDate: task.endDate,
+    status: task.status,
+  })
+
   // Calculate position and width of the task bar
   const calculatePosition = () => {
     // Ensure task dates are within the visible range
     const taskStart = startOfDay(new Date(task.startDate))
     const taskEnd = endOfDay(new Date(task.endDate))
+
+    // Log date calculations for debugging
+    console.log(`Task ${task.id} date range:`, {
+      taskStart,
+      taskEnd,
+      chartStartDate: startDate,
+      chartEndDate: endDate,
+      isOutsideRange: isAfter(taskStart, endDate) || isBefore(taskEnd, startDate),
+    })
 
     // If task is completely outside the visible range, don't render
     if (isAfter(taskStart, endDate) || isBefore(taskEnd, startDate)) {
@@ -56,6 +75,7 @@ export default function TaskBar({
 
   // If task is not in the visible range, don't render
   if (!position) {
+    console.log(`Task ${task.id} is outside visible range, not rendering`)
     return null
   }
 
@@ -91,7 +111,7 @@ export default function TaskBar({
     <div
       className={`absolute rounded-md border-2 shadow-sm cursor-pointer hover:shadow-md transition-shadow ${
         isParent ? "h-12" : "h-8"
-      } ${getStatusColor()}`}
+      } ${getStatusColor()} ${className || ""}`}
       style={{
         left: position.left,
         width: position.width,

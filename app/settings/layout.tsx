@@ -1,50 +1,45 @@
-"use client"
-
 import type React from "react"
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { useAuth } from "@/contexts/auth-context"
-import { PageLayout } from "@/components/page-layout"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import type { Metadata } from "next"
+import Link from "next/link"
+
+export const metadata: Metadata = {
+  title: "Settings",
+  description: "Manage your workspace settings and preferences",
+}
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
-  const router = useRouter()
-
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/login")
-    }
-  }, [loading, user, router])
-
-  if (loading || !user) {
-    return (
-      <div className="flex min-h-screen items-center justify-center w-full">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <PageLayout title="User Settings" description="Manage your personal settings and preferences">
-      <Tabs defaultValue="notifications" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-3 mb-8">
-          <TabsTrigger value="profile" onClick={() => router.push("/profile")}>
-            Profile
-          </TabsTrigger>
-          <TabsTrigger value="notifications" onClick={() => router.push("/settings/notifications")}>
-            Notifications
-          </TabsTrigger>
-          <TabsTrigger value="appearance" onClick={() => router.push("/settings/appearance")}>
-            Appearance
-          </TabsTrigger>
-        </TabsList>
-        {children}
-      </Tabs>
-    </PageLayout>
+    <div className="container mx-auto py-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold tracking-tight">Workspace Settings</h1>
+        <p className="text-muted-foreground">Manage your workspace settings and preferences</p>
+      </div>
+      <div className="flex flex-col space-y-8 lg:flex-row lg:space-x-12 lg:space-y-0">
+        <aside className="lg:w-1/5">
+          <nav className="flex space-x-2 lg:flex-col lg:space-x-0 lg:space-y-1">
+            <Link
+              href="/settings/profile"
+              className="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+            >
+              Profile
+            </Link>
+            <Link
+              href="/settings/members"
+              className="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+            >
+              Members
+            </Link>
+            <Link
+              href="/settings/permissions"
+              className="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+            >
+              Permissions
+            </Link>
+          </nav>
+        </aside>
+        <div className="flex-1">{children}</div>
+      </div>
+    </div>
   )
 }

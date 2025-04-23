@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Shield, Save, Loader2 } from "lucide-react"
 import { updateWorkspace } from "@/lib/firebase/workspace"
 
-export default function WorkspacePermissions() {
+export function WorkspacePermissions() {
   const { toast } = useToast()
   const { currentWorkspace, refreshWorkspaces } = useWorkspace()
 
@@ -138,3 +138,6 @@ export default function WorkspacePermissions() {
     </div>
   )
 }
+
+// Keep the default export for backward compatibility
+export default WorkspacePermissions

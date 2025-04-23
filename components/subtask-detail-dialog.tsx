@@ -34,6 +34,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import type { SubTask } from "@/lib/types"
+import { toast } from "@/components/ui/use-toast"
+import { updateSubtask } from "@/lib/firebase/subtasks"
+import { syncTaskCompletionFromSubtasks } from "@/lib/firebase/db"
 
 interface SubtaskDetailDialogProps {
   subtask: SubTask
@@ -147,14 +150,20 @@ export default function SubtaskDetailDialog({ subtask, open, onClose, onUpdate, 
 
       // Create updated subtask object
       const updatedSubtask = {
-        ...subtask,
         completion,
         status,
         updates: [...(subtask.updates || []), newUpdate],
       }
 
+      const originalStatus = subtask.status
+      const parentId = subtask.parentId
+
       // Update the subtask
-      await onUpdate(subtask.id, subtask.parentId, updatedSubtask)
+      await updateSubtask(subtask.id, updatedSubtask)
+
+      if (status !== originalStatus && parentId) {
+        await syncTaskCompletionFromSubtasks(parentId)
+      }
 
       // Reset form
       setUpdateText("")
@@ -183,30 +192,18 @@ export default function SubtaskDetailDialog({ subtask, open, onClose, onUpdate, 
       }
 
       const updatedSubtask = {
-        ...subtask,
         title,
         description,
         startDate: startDate.toISOString().split("T")[0],
         endDate: endDate.toISOString().split("T")[0],
       }
 
-      await onUpdate(subtask.id, subtask.parentId, updatedSubtask)
+      await updateSubtask(subtask.id, updatedSubtask)
       setIsEditing(false)
     } catch (error) {
       console.error("Error updating subtask:", error)
       alert(`Error updating subtask: ${error.message || "Unknown error"}`)
     }
-  }
-
-  // Handle subtask deletion
-  const handleDelete = () => {
-    if (!subtask.id || !subtask.parentId || !onDelete) return
-
-    // Close the confirmation dialog
-    setShowDeleteConfirm(false)
-
-    // Call the onDelete callback
-    onDelete(subtask.id, subtask.parentId)
   }
 
   // Get user name by ID
@@ -233,6 +230,52 @@ export default function SubtaskDetailDialog({ subtask, open, onClose, onUpdate, 
     return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
   }
 
+  // When handling updates
+  const handleUpdate = async (updatedData: Partial<SubTask>) => {
+    if (!subtask.parentId) {
+      toast({
+        title: "Error",
+        description: "Missing parent task reference. Cannot update subtask.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      await updateSubtask(subtask.id, updatedData)
+    } catch (error) {
+      console.error("Error updating subtask:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update subtask. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // When handling deletion
+  const handleDeleteSubtask = async () => {
+    if (!subtask.parentId) {
+      toast({
+        title: "Error",
+        description: "Missing parent task reference. Cannot delete subtask.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      await onDelete(subtask.id, subtask.parentId)
+    } catch (error) {
+      console.error("Error deleting subtask:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete subtask. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
   return (
     <>
       <Dialog
@@ -244,7 +287,7 @@ export default function SubtaskDetailDialog({ subtask, open, onClose, onUpdate, 
           }
         }}
       >
-        <DialogContent className="sm:max-w-[700px] p-0 max-h-[90vh] flex flex-col">
+        <DialogContent className="sm:max-w-[700px] p-0 h-[80vh] overflow-hidden flex flex-col">
           <DialogDescription className="sr-only">Subtask details and updates</DialogDescription>
           <div className="p-4 border-b flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -256,327 +299,325 @@ export default function SubtaskDetailDialog({ subtask, open, onClose, onUpdate, 
             </Button>
           </div>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
             <TabsList className="grid grid-cols-2 w-full">
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="updates">Updates</TabsTrigger>
             </TabsList>
 
             <div className="flex-1 overflow-hidden">
-              <TabsContent value="details" className="h-full data-[state=active]:flex flex-col">
-                <ScrollArea className="flex-1 p-4">
-                  {isEditing ? (
-                    <form onSubmit={handleEditSubmit} className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="title">Subtask Title</Label>
-                        <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} required />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="description">Description</Label>
-                        <Textarea
-                          id="description"
-                          value={description}
-                          onChange={(e) => setDescription(e.target.value)}
-                          rows={3}
-                          className="resize-none"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
+              <TabsContent value="details" className="h-full data-[state=active]:flex flex-col overflow-hidden">
+                <ScrollArea className="flex-1">
+                  <div className="p-4">
+                    {isEditing ? (
+                      <form onSubmit={handleEditSubmit} className="space-y-4">
                         <div className="space-y-2">
-                          <Label>Start Date</Label>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button variant="outline" className={cn("w-full justify-start text-left font-normal")}>
-                                <Calendar className="mr-2 h-4 w-4" />
-                                {format(startDate, "PPP")}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <CalendarComponent
-                                mode="single"
-                                selected={startDate}
-                                onSelect={(date) => date && setStartDate(date)}
-                                initialFocus
-                              />
-                            </PopoverContent>
-                          </Popover>
+                          <Label htmlFor="title">Subtask Title</Label>
+                          <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} required />
                         </div>
 
                         <div className="space-y-2">
-                          <Label>End Date</Label>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button variant="outline" className={cn("w-full justify-start text-left font-normal")}>
-                                <Calendar className="mr-2 h-4 w-4" />
-                                {format(endDate, "PPP")}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <CalendarComponent
-                                mode="single"
-                                selected={endDate}
-                                onSelect={(date) => date && setEndDate(date)}
-                                initialFocus
-                                disabled={(date) => date < startDate}
-                              />
-                            </PopoverContent>
-                          </Popover>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end gap-2 pt-4">
-                        <Button type="button" variant="outline" onClick={() => setIsEditing(false)}>
-                          Cancel
-                        </Button>
-                        <Button type="submit">Save Changes</Button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="space-y-6">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Status</p>
-                          <Badge className="mt-1">
-                            <ProgressIndicator status={subtask.status} size="sm" className="mr-1" />
-                            <span className="capitalize">{subtask.status.replace("-", " ")}</span>
-                          </Badge>
+                          <Label htmlFor="description">Description</Label>
+                          <Textarea
+                            id="description"
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value)}
+                            rows={3}
+                            className="resize-none"
+                          />
                         </div>
 
-                        <div>
-                          <p className="text-sm text-muted-foreground">Completion</p>
-                          <div className="mt-1">
-                            <Progress value={subtask.completion} className="h-2" />
-                            <p className="text-sm mt-1">{subtask.completion}%</p>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Start Date</Label>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button variant="outline" className={cn("w-full justify-start text-left font-normal")}>
+                                  <Calendar className="mr-2 h-4 w-4" />
+                                  {format(startDate, "PPP")}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <CalendarComponent
+                                  mode="single"
+                                  selected={startDate}
+                                  onSelect={(date) => date && setStartDate(date)}
+                                  initialFocus
+                                />
+                              </PopoverContent>
+                            </Popover>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label>End Date</Label>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button variant="outline" className={cn("w-full justify-start text-left font-normal")}>
+                                  <Calendar className="mr-2 h-4 w-4" />
+                                  {format(endDate, "PPP")}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <CalendarComponent
+                                  mode="single"
+                                  selected={endDate}
+                                  onSelect={(date) => date && setEndDate(date)}
+                                  initialFocus
+                                  disabled={(date) => date < startDate}
+                                />
+                              </PopoverContent>
+                            </Popover>
                           </div>
                         </div>
 
-                        <div>
-                          <p className="text-sm text-muted-foreground">Start Date</p>
-                          <div className="flex items-center gap-1 mt-1">
-                            <Calendar className="h-4 w-4 text-muted-foreground" />
-                            <span>{formatDate(subtask.startDate)}</span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-sm text-muted-foreground">End Date</p>
-                          <div className="flex items-center gap-1 mt-1">
-                            <Calendar className="h-4 w-4 text-muted-foreground" />
-                            <span>{formatDate(subtask.endDate)}</span>
-                          </div>
-                        </div>
-
-                        <div className="col-span-2">
-                          <p className="text-sm text-muted-foreground">Assignees</p>
-                          <div className="flex items-center gap-1 mt-1">
-                            <Users className="h-4 w-4 text-muted-foreground" />
-                            <span>
-                              {subtask.assigneeIds && subtask.assigneeIds.length > 0
-                                ? subtask.assigneeIds.map((id) => getUserName(id)).join(", ")
-                                : "No assignees"}
-                            </span>
-                          </div>
-                        </div>
-
-                        {subtask.description && (
-                          <div className="col-span-2">
-                            <p className="text-sm text-muted-foreground">Description</p>
-                            <p className="mt-1 p-3 bg-muted/30 rounded-md">{subtask.description}</p>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex justify-between gap-2">
-                        {canDelete && onDelete && (
-                          <Button
-                            variant="destructive"
-                            onClick={() => setShowDeleteConfirm(true)}
-                            className="bg-destructive/10 text-destructive hover:bg-destructive/20"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Delete Subtask
+                        <div className="flex justify-end gap-2 pt-4">
+                          <Button type="button" variant="outline" onClick={() => setIsEditing(false)}>
+                            Cancel
                           </Button>
-                        )}
+                          <Button type="submit">Save Changes</Button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-sm text-muted-foreground">Status</p>
+                            <Badge className="mt-1">
+                              <ProgressIndicator status={subtask.status} size="sm" className="mr-1" />
+                              <span className="capitalize">{subtask.status.replace("-", " ")}</span>
+                            </Badge>
+                          </div>
 
-                        <div className="flex gap-2 ml-auto">
-                          {canEdit && (
-                            <Button onClick={() => setIsEditing(true)}>
-                              <Edit className="h-4 w-4 mr-2" />
-                              Edit Subtask
-                            </Button>
+                          <div>
+                            <p className="text-sm text-muted-foreground">Completion</p>
+                            <div className="mt-1">
+                              <Progress value={subtask.completion} className="h-2" />
+                              <p className="text-sm mt-1">{subtask.completion}%</p>
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-sm text-muted-foreground">Start Date</p>
+                            <div className="flex items-center gap-1 mt-1">
+                              <Calendar className="h-4 w-4 text-muted-foreground" />
+                              <span>{formatDate(subtask.startDate)}</span>
+                            </div>
+                          </div>
+
+                          <div>
+                            <p className="text-sm text-muted-foreground">End Date</p>
+                            <div className="flex items-center gap-1 mt-1">
+                              <Calendar className="h-4 w-4 text-muted-foreground" />
+                              <span>{formatDate(subtask.endDate)}</span>
+                            </div>
+                          </div>
+
+                          <div className="col-span-2">
+                            <p className="text-sm text-muted-foreground">Assignees</p>
+                            <div className="flex items-center gap-1 mt-1">
+                              <Users className="h-4 w-4 text-muted-foreground" />
+                              <span>
+                                {subtask.assigneeIds && subtask.assigneeIds.length > 0
+                                  ? subtask.assigneeIds.map((id) => getUserName(id)).join(", ")
+                                  : "No assignees"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {subtask.description && (
+                            <div className="col-span-2">
+                              <p className="text-sm text-muted-foreground">Description</p>
+                              <p className="mt-1 p-3 bg-muted/30 rounded-md">{subtask.description}</p>
+                            </div>
                           )}
                         </div>
+
+                        <div className="flex justify-between gap-2">
+                          {canDelete && onDelete && (
+                            <Button
+                              variant="destructive"
+                              onClick={() => setShowDeleteConfirm(true)}
+                              className="bg-destructive/10 text-destructive hover:bg-destructive/20"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Subtask
+                            </Button>
+                          )}
+
+                          <div className="flex gap-2 ml-auto">
+                            {canEdit && (
+                              <Button onClick={() => setIsEditing(true)}>
+                                <Edit className="h-4 w-4 mr-2" />
+                                Edit Subtask
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </ScrollArea>
               </TabsContent>
 
-              <TabsContent value="updates" className="h-full data-[state=active]:flex flex-col">
-                <div className="flex-1 flex flex-col">
-                  <ScrollArea className="flex-1 p-4">
-                    <div className="space-y-4">
-                      {subtask.updates && subtask.updates.length > 0 ? (
-                        subtask.updates.map((update) => (
-                          <div key={update.id} className="border rounded-md p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <Avatar className="h-6 w-6">
-                                  <AvatarFallback>{getUserName(update.userId).charAt(0)}</AvatarFallback>
-                                </Avatar>
-                                <span className="font-medium">{getUserName(update.userId)}</span>
-                              </div>
-                              <span className="text-xs text-muted-foreground">
-                                {format(new Date(update.timestamp), "MMM d, yyyy 'at' h:mm a")}
-                              </span>
+              <TabsContent value="updates" className="h-full data-[state=active]:flex flex-col overflow-hidden">
+                <ScrollArea className="flex-1">
+                  <div className="p-4 space-y-4">
+                    {subtask.updates && subtask.updates.length > 0 ? (
+                      subtask.updates.map((update) => (
+                        <div key={update.id} className="border rounded-md p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Avatar className="h-6 w-6">
+                                <AvatarFallback>{getUserName(update.userId).charAt(0)}</AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium">{getUserName(update.userId)}</span>
                             </div>
-
-                            {update.type && update.type !== "comment" && (
-                              <Badge variant="outline" className="mb-1 capitalize">
-                                {update.type.replace("_", " ")}
-                              </Badge>
-                            )}
-
-                            <p className="text-sm">{update.text}</p>
-
-                            {update.file && (
-                              <div className="mt-2 bg-muted/30 p-2 rounded-md flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <FileText className="h-4 w-4 text-muted-foreground" />
-                                  <div>
-                                    <p className="text-sm font-medium">{update.file.name}</p>
-                                    {update.file.size && (
-                                      <p className="text-xs text-muted-foreground">
-                                        {formatFileSize(update.file.size)}
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                                <Button variant="ghost" size="sm" asChild>
-                                  <a href={update.file.url} target="_blank" rel="noopener noreferrer">
-                                    Download
-                                  </a>
-                                </Button>
-                              </div>
-                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {format(new Date(update.timestamp), "MMM d, yyyy 'at' h:mm a")}
+                            </span>
                           </div>
-                        ))
-                      ) : (
-                        <div className="text-center py-8 text-muted-foreground flex flex-col items-center">
-                          <MessageSquare className="h-12 w-12 text-muted-foreground/50 mb-2" />
-                          <p>No updates yet</p>
-                          <p className="text-sm">Add an update using the form below</p>
-                        </div>
-                      )}
-                    </div>
-                  </ScrollArea>
 
-                  {canEdit && (
-                    <div className="border-t p-4">
-                      <form onSubmit={handleSubmit} className="space-y-4">
-                        <div>
-                          <Label htmlFor="update-text">Add Update</Label>
-                          <Textarea
-                            id="update-text"
-                            placeholder="Add a comment or update..."
-                            value={updateText}
-                            onChange={(e) => setUpdateText(e.target.value)}
-                            className="resize-none mt-2"
-                          />
-                        </div>
+                          {update.type && update.type !== "comment" && (
+                            <Badge variant="outline" className="mb-1 capitalize">
+                              {update.type.replace("_", " ")}
+                            </Badge>
+                          )}
 
-                        <div className="flex items-center gap-2">
-                          <Input id="subtask-file-input" type="file" className="hidden" onChange={handleFileChange} />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => document.getElementById("subtask-file-input")?.click()}
-                            className="flex items-center gap-2"
-                          >
-                            <PaperclipIcon className="h-4 w-4" />
-                            {selectedFile ? "Change File" : "Attach File"}
-                          </Button>
+                          <p className="text-sm">{update.text}</p>
 
-                          {selectedFile && (
-                            <div className="text-sm">
-                              <p className="font-medium truncate">{selectedFile.name}</p>
-                              <p className="text-xs text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
+                          {update.file && (
+                            <div className="mt-2 bg-muted/30 p-2 rounded-md flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <FileText className="h-4 w-4 text-muted-foreground" />
+                                <div>
+                                  <p className="text-sm font-medium">{update.file.name}</p>
+                                  {update.file.size && (
+                                    <p className="text-xs text-muted-foreground">{formatFileSize(update.file.size)}</p>
+                                  )}
+                                </div>
+                              </div>
+                              <Button variant="ghost" size="sm" asChild>
+                                <a href={update.file.url} target="_blank" rel="noopener noreferrer">
+                                  Download
+                                </a>
+                              </Button>
                             </div>
                           )}
                         </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground flex flex-col items-center">
+                        <MessageSquare className="h-12 w-12 text-muted-foreground/50 mb-2" />
+                        <p>No updates yet</p>
+                        <p className="text-sm">Add an update using the form below</p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
 
-                        {isUploading && uploadProgress > 0 && (
-                          <div className="space-y-1">
-                            <div className="flex justify-between text-xs">
-                              <span>Uploading...</span>
-                              <span>{Math.round(uploadProgress)}%</span>
-                            </div>
-                            <Progress value={uploadProgress} className="h-1" />
+                {canEdit && (
+                  <div className="border-t p-4">
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                      <div>
+                        <Label htmlFor="update-text">Add Update</Label>
+                        <Textarea
+                          id="update-text"
+                          placeholder="Add a comment or update..."
+                          value={updateText}
+                          onChange={(e) => setUpdateText(e.target.value)}
+                          className="resize-none mt-2"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Input id="subtask-file-input" type="file" className="hidden" onChange={handleFileChange} />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => document.getElementById("subtask-file-input")?.click()}
+                          className="flex items-center gap-2"
+                        >
+                          <PaperclipIcon className="h-4 w-4" />
+                          {selectedFile ? "Change File" : "Attach File"}
+                        </Button>
+
+                        {selectedFile && (
+                          <div className="text-sm">
+                            <p className="font-medium truncate">{selectedFile.name}</p>
+                            <p className="text-xs text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
                           </div>
                         )}
+                      </div>
 
-                        <div className="space-y-2">
-                          <Label>Completion: {completion}%</Label>
-                          <Slider
-                            value={[completion]}
-                            min={0}
-                            max={100}
-                            step={1}
-                            onValueChange={(value) => setCompletion(value[0])}
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label>Status</Label>
-                          <div className="flex flex-wrap gap-2">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant={status === "pending" ? "default" : "outline"}
-                              onClick={() => setStatus("pending")}
-                              className={
-                                status === "pending" ? "bg-warning text-warning-foreground hover:bg-warning/90" : ""
-                              }
-                            >
-                              <ProgressIndicator status="pending" size="sm" className="mr-1" /> Not Started
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant={status === "in-progress" ? "default" : "outline"}
-                              onClick={() => setStatus("in-progress")}
-                              className={status === "in-progress" ? "bg-primary text-primary-foreground" : ""}
-                            >
-                              <ProgressIndicator status="in-progress" size="sm" className="mr-1" /> In Progress
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant={status === "completed" ? "default" : "outline"}
-                              onClick={() => setStatus("completed")}
-                              className={
-                                status === "completed" ? "bg-success text-success-foreground hover:bg-success/90" : ""
-                              }
-                            >
-                              <ProgressIndicator status="completed" size="sm" className="mr-1" /> Completed
-                            </Button>
+                      {isUploading && uploadProgress > 0 && (
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span>Uploading...</span>
+                            <span>{Math.round(uploadProgress)}%</span>
                           </div>
+                          <Progress value={uploadProgress} className="h-1" />
                         </div>
+                      )}
 
-                        <div className="flex justify-end gap-2">
-                          <Button type="button" variant="outline" onClick={onClose}>
-                            Cancel
+                      <div className="space-y-2">
+                        <Label>Completion: {completion}%</Label>
+                        <Slider
+                          value={[completion]}
+                          min={0}
+                          max={100}
+                          step={1}
+                          onValueChange={(value) => setCompletion(value[0])}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Status</Label>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={status === "pending" ? "default" : "outline"}
+                            onClick={() => setStatus("pending")}
+                            className={
+                              status === "pending" ? "bg-warning text-warning-foreground hover:bg-warning/90" : ""
+                            }
+                          >
+                            <ProgressIndicator status="pending" size="sm" className="mr-1" /> Not Started
                           </Button>
-                          <Button type="submit" disabled={isUploading || (!updateText.trim() && !selectedFile)}>
-                            {isUploading ? "Saving..." : "Save Update"}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={status === "in-progress" ? "default" : "outline"}
+                            onClick={() => setStatus("in-progress")}
+                            className={status === "in-progress" ? "bg-primary text-primary-foreground" : ""}
+                          >
+                            <ProgressIndicator status="in-progress" size="sm" className="mr-1" /> In Progress
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={status === "completed" ? "default" : "outline"}
+                            onClick={() => setStatus("completed")}
+                            className={
+                              status === "completed" ? "bg-success text-success-foreground hover:bg-success/90" : ""
+                            }
+                          >
+                            <ProgressIndicator status="completed" size="sm" className="mr-1" /> Completed
                           </Button>
                         </div>
-                      </form>
-                    </div>
-                  )}
-                </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2">
+                        <Button type="button" variant="outline" onClick={onClose}>
+                          Cancel
+                        </Button>
+                        <Button type="submit" disabled={isUploading || (!updateText.trim() && !selectedFile)}>
+                          {isUploading ? "Saving..." : "Save Update"}
+                        </Button>
+                      </div>
+                    </form>
+                  </div>
+                )}
               </TabsContent>
             </div>
           </Tabs>
@@ -599,7 +640,7 @@ export default function SubtaskDetailDialog({ subtask, open, onClose, onUpdate, 
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDelete}
+              onClick={handleDeleteSubtask}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete

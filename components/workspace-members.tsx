@@ -40,7 +40,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import InviteMemberDialog from "@/components/invite-member-dialog"
 
-export default function WorkspaceMembers() {
+export function WorkspaceMembers() {
   const { toast } = useToast()
   const { user } = useAuth()
   const { currentWorkspace, userRole, refreshWorkspaceMembers } = useWorkspace()
@@ -462,3 +462,6 @@ export default function WorkspaceMembers() {
     </Card>
   )
 }
+
+// Keep the default export for backward compatibility
+export default WorkspaceMembers

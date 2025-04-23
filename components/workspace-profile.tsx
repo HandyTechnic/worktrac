@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Save, Loader2 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 
-export default function WorkspaceProfile() {
+export function WorkspaceProfile() {
   const { toast } = useToast()
   const { currentWorkspace, refreshWorkspaces } = useWorkspace()
 
@@ -143,3 +143,6 @@ export default function WorkspaceProfile() {
     </div>
   )
 }
+
+// Keep the default export for backward compatibility
+export default WorkspaceProfile

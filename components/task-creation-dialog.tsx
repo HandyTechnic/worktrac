@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useEffect } from "react"
 import {
   Dialog,
@@ -31,8 +33,7 @@ import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { createTaskInvitation } from "@/lib/firebase/task-invitations"
-import { getTask } from "@/lib/firebase/db"
+import { createTask } from "@/lib/firebase/db"
 
 // Add a check at the beginning of the component to restrict access
 export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
@@ -75,6 +76,8 @@ export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
   const [loading, setLoading] = useState(false)
   const [workspaceMembers, setWorkspaceMembers] = useState([])
   const [loadingMembers, setLoadingMembers] = useState(true)
+  const [selectedAssignees, setSelectedAssignees] = useState<string[]>([])
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Fetch workspace members
   useEffect(() => {
@@ -179,150 +182,43 @@ export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
   }
 
   // Update the handleSubmit function to use the addTask function from the context
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
-
-    // Validate form
-    if (!title || assigneeIds.length === 0 || !startDate || !endDate) {
-      toast({
-        title: "Missing Fields",
-        description: "Please fill in all required fields.",
-        variant: "destructive",
-      })
-      setLoading(false)
-      return
-    }
-
-    // Check if workspace is available
-    if (!currentWorkspace) {
-      toast({
-        title: "Error",
-        description: "No workspace selected. Please select a workspace first.",
-        variant: "destructive",
-      })
-      setLoading(false)
-      return
-    }
-
-    // Validate subtasks if present
-    if (hasSubtasks && subtasks.length > 0) {
-      const invalidSubtask = subtasks.find((st) => !st.title || st.assigneeIds.length === 0)
-
-      if (invalidSubtask) {
-        toast({
-          title: "Invalid Subtask",
-          description: "Please ensure all subtasks have a title and at least one assignee.",
-          variant: "destructive",
-        })
-        setLoading(false)
-        return
-      }
-    }
 
     try {
-      // Determine which assignees need invitations
-      // Managers, admins, and owners can directly assign tasks without invitations
-      const isManager = userRole === "manager" || userRole === "admin" || userRole === "owner"
+      setIsSubmitting(true)
 
-      // For regular members, they can only create tasks for themselves initially
-      // Other members will need invitations
-      const directAssignees = isManager
-        ? [...assigneeIds] // Managers can assign directly to anyone
-        : [user?.id] // Regular users can only assign to themselves initially
+      // Ensure complexity and workload are numbers
+      const complexityValue = Number.parseInt(complexity, 10) || 1 // Default to 1 if not a valid number
+      const workloadValue = Number.parseInt(workload, 10) || 1 // Default to 1 if not a valid number
 
-      // Assignees that need invitations (for regular members only)
-      const invitationAssignees = isManager
-        ? [] // Managers don't need to send invitations
-        : assigneeIds.filter((id) => id !== user?.id) // Regular users need to invite others
+      console.log(`Creating task with complexity: ${complexityValue}, workload: ${workloadValue}`)
 
-      // Create new task with direct assignees
+      // Create the task with the validated values
       const newTask = {
         title,
         description,
-        assigneeIds: directAssignees,
+        assigneeIds: selectedAssignees,
         startDate: startDate.toISOString().split("T")[0],
         endDate: endDate.toISOString().split("T")[0],
         status: "pending",
         completion: 0,
-        complexity: Number.parseInt(complexity),
-        workload: Number.parseInt(workload),
-        requiresApproval,
-        updates: [],
+        complexity: complexityValue,
+        workload: workloadValue,
         creatorId: user?.id,
-        workspaceId: currentWorkspace.id,
-        subtasks:
-          hasSubtasks && subtasks.length > 0
-            ? subtasks.map((st) => {
-                // For subtasks, apply the same permission logic
-                const directSubtaskAssignees = isManager
-                  ? [...st.assigneeIds]
-                  : st.assigneeIds.includes(user?.id)
-                    ? [user?.id]
-                    : []
-
-                return {
-                  title: st.title,
-                  assigneeIds: directSubtaskAssignees,
-                  startDate: st.startDate.toISOString().split("T")[0],
-                  endDate: st.endDate.toISOString().split("T")[0],
-                  status: "pending",
-                  completion: 0,
-                  requiresAcceptance: st.requiresAcceptance,
-                  creatorId: user?.id,
-                }
-              })
-            : [],
+        workspaceId: currentWorkspace?.id,
+        updates: [],
       }
 
-      // Add the task
-      const taskId = await addTask(newTask)
+      // Log the task being created
+      console.log("Creating new task:", newTask)
 
-      if (!taskId) {
-        throw new Error("Failed to create task")
-      }
-
-      // Send invitations to other assignees if needed
-      if (!isManager && invitationAssignees.length > 0) {
-        for (const assigneeId of invitationAssignees) {
-          try {
-            await createTaskInvitation(
-              taskId,
-              null, // No subtask
-              user?.id,
-              assigneeId,
-              currentWorkspace.id,
-            )
-          } catch (error) {
-            console.error(`Error inviting user ${assigneeId} to task:`, error)
-          }
-        }
-      }
-
-      // Send invitations for subtasks if needed
-      if (!isManager && hasSubtasks && subtasks.length > 0) {
-        const taskDoc = await getTask(taskId)
-
-        if (taskDoc && taskDoc.subtasks) {
-          for (const subtask of taskDoc.subtasks) {
-            const subtaskInvitees = subtask.requiresAcceptance
-              ? subtask.assigneeIds.filter((id) => id !== user?.id)
-              : []
-
-            for (const inviteeId of subtaskInvitees) {
-              try {
-                await createTaskInvitation(taskId, subtask.id, user?.id, inviteeId, currentWorkspace.id)
-              } catch (error) {
-                console.error(`Error inviting user ${inviteeId} to subtask:`, error)
-              }
-            }
-          }
-        }
-      }
+      // Create the task
+      await createTask(newTask)
 
       toast({
         title: "Task Created",
-        description: `Task "${title}" has been created.`,
+        description: "Your task has been created successfully.",
       })
 
       onClose()
@@ -334,7 +230,7 @@ export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
         variant: "destructive",
       })
     } finally {
-      setLoading(false)
+      setIsSubmitting(false)
     }
   }
 

@@ -14,9 +14,11 @@ import {
   type QuerySnapshot,
   serverTimestamp,
   setDoc,
+  writeBatch,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase/config"
 import type { Task } from "@/lib/types"
+import { getSubtasksByParent, batchCreateSubtasks } from "@/lib/firebase/subtasks"
 
 // Add this function to create a new document with auto-generated ID
 export async function addDocument(collectionName: string, data: any) {
@@ -49,9 +51,61 @@ export async function getTasks(workspaceId: string) {
   }
 }
 
+// Add this function to create a task with subtasks
+export async function createTaskWithSubtasks(
+  taskData: Omit<Task, "id">,
+  subtasksData?: Omit<Task, "id" | "parentId">[],
+) {
+  try {
+    console.log("Creating new task with subtasks:", taskData.title)
+
+    // First create the task without subtasks
+    const taskWithoutSubtasks = {
+      ...taskData,
+      subtaskIds: [], // Initialize empty array for subtask IDs
+    }
+
+    // Remove the subtasks array if it exists
+    if ("subtasks" in taskWithoutSubtasks) {
+      delete taskWithoutSubtasks.subtasks
+    }
+
+    // Create the task
+    const tasksRef = collection(db, "tasks")
+    const docRef = await addDoc(tasksRef, {
+      ...taskWithoutSubtasks,
+      createdAt: serverTimestamp(),
+    })
+
+    const taskId = docRef.id
+    console.log(`Task created with ID: ${taskId}`)
+
+    // If there are subtasks, create them
+    if (subtasksData && subtasksData.length > 0) {
+      const subtaskIds = await batchCreateSubtasks(taskId, subtasksData)
+      console.log(`Created ${subtaskIds.length} subtasks for task ${taskId}`)
+    }
+
+    return taskId
+  } catch (error) {
+    console.error("Error creating task with subtasks:", error)
+    throw error
+  }
+}
+
+// Update the getTask function to fetch subtasks separately
 export async function getTask(taskId: string): Promise<Task | null> {
   try {
     console.log(`Getting task with ID: ${taskId}`)
+
+    // Check if this is a subtask ID
+    if (taskId.includes("-sub-")) {
+      console.log(`This appears to be a legacy subtask ID: ${taskId}`)
+      // For backward compatibility with old subtask IDs
+      // You can implement legacy handling here if needed
+      return null
+    }
+
     const taskRef = doc(db, "tasks", taskId)
     const taskDoc = await getDoc(taskRef)
 
@@ -60,45 +114,29 @@ export async function getTask(taskId: string): Promise<Task | null> {
       return null
     }
 
-    // Check if this is a subtask by looking for a "-sub-" in the ID
-    // Safely check if taskId is defined and is a string before using indexOf
-    const isSubtask = taskId && typeof taskId === "string" && taskId.indexOf("-sub-") !== -1
+    const taskData = taskDoc.data()
 
-    if (isSubtask) {
-      // This is a subtask, we need to extract the parent ID and get the subtask from it
-      const parentId = taskId.split("-sub-")[0]
-      console.log(`This appears to be a subtask. Parent task ID: ${parentId}`)
+    // Fetch subtasks if the task has any subtaskIds
+    let subtasks = []
+    if (taskData.subtaskIds && taskData.subtaskIds.length > 0) {
+      console.log(`Fetching ${taskData.subtaskIds.length} subtasks for task ${taskId}`)
+      subtasks = await getSubtasksByParent(taskId)
 
-      // Get the parent task
-      const parentTaskRef = doc(db, "tasks", parentId)
-      const parentTaskDoc = await getDoc(parentTaskRef)
+      // Add the parentId to each subtask explicitly
+      subtasks = subtasks.map((subtask) => ({
+        ...subtask,
+        parentId: taskId,
+      }))
 
-      if (!parentTaskDoc.exists()) {
-        console.log(`Parent task with ID ${parentId} not found`)
-        return null
-      }
-
-      const parentTask = parentTaskDoc.data()
-
-      // Find the subtask in the parent's subtasks array
-      if (parentTask.subtasks && Array.isArray(parentTask.subtasks)) {
-        const subtask = parentTask.subtasks.find((st: any) => st.id === taskId)
-
-        if (subtask) {
-          // Return the subtask with additional parent info
-          return {
-            ...subtask,
-            parentId,
-            id: taskId,
-          } as Task
-        }
-      }
-
-      console.log(`Subtask with ID ${taskId} not found in parent task`)
-      return null
+      console.log(`Successfully fetched ${subtasks.length} subtasks for task ${taskId}`)
     }
 
-    return { id: taskDoc.id, ...taskDoc.data() } as Task
+    // Return the task with its subtasks
+    return {
+      id: taskDoc.id,
+      ...taskData,
+      subtasks: subtasks || [],
+    } as Task
   } catch (error) {
     console.error("Error getting task:", error)
     throw error
@@ -140,149 +178,115 @@ export async function createTask(taskData: Omit<Task, "id">) {
   }
 }
 
-// Update the updateTask function to handle subtasks properly
+// Replace the updateTask function with this refactored version
 export async function updateTask(taskId: string, updatedTask: any, createIfNotExists = false) {
   try {
     console.log(`Updating task with ID: ${taskId}`, createIfNotExists ? "(create if not exists)" : "")
 
-    // Check if this is a subtask by looking for a parentId or "-sub-" in the ID
-    const isSubtask = updatedTask.parentId || (taskId && taskId.includes("-sub-"))
+    // Remove subtasks from the task data to prevent circular updates
+    const taskDataWithoutSubtasks = { ...updatedTask }
+    delete taskDataWithoutSubtasks.subtasks
 
-    if (isSubtask) {
-      console.log("This is a subtask. Finding parent task to update subtask within it.")
+    // Update the task document
+    const taskRef = doc(db, "tasks", taskId)
 
-      // Get the parent ID
-      const parentId = updatedTask.parentId || taskId.split("-sub-")[0]
-      console.log(`Parent task ID: ${parentId}`)
-
-      // Get the parent task
-      const parentTaskRef = doc(db, "tasks", parentId)
-      const parentTaskDoc = await getDoc(parentTaskRef)
-
-      if (!parentTaskDoc.exists()) {
-        throw new Error(`Parent task with ID ${parentId} not found`)
-      }
-
-      const parentTask = { id: parentTaskDoc.id, ...parentTaskDoc.data() } as Task
-
-      // Find and update the subtask within the parent task
-      if (parentTask.subtasks && parentTask.subtasks.length > 0) {
-        const subtaskIndex = parentTask.subtasks.findIndex((st) => st.id === taskId)
-
-        if (subtaskIndex !== -1) {
-          console.log(`Found subtask at index ${subtaskIndex}. Updating it.`)
-
-          // Update the subtask in the parent's subtasks array
-          parentTask.subtasks[subtaskIndex] = {
-            ...parentTask.subtasks[subtaskIndex],
-            ...updatedTask,
-            id: taskId, // Ensure ID is preserved
-            parentId: parentId, // Ensure parent ID is preserved
-            updatedAt: new Date().toISOString(),
-          }
-
-          // Update the parent task with the modified subtasks array
-          await updateDoc(parentTaskRef, {
-            subtasks: parentTask.subtasks,
-            updatedAt: serverTimestamp(),
-          })
-
-          console.log(`Subtask ${taskId} updated successfully within parent task ${parentId}`)
-          return taskId
-        } else {
-          console.warn(`Subtask with ID ${taskId} not found in parent task ${parentId}`)
-
-          // If we're creating if not exists, add it as a new subtask
-          if (createIfNotExists) {
-            console.log(`Adding subtask ${taskId} to parent task ${parentId}`)
-
-            // Ensure the subtask has the correct ID and parentId
-            const newSubtask = {
-              ...updatedTask,
-              id: taskId,
-              parentId: parentId,
-              updatedAt: new Date().toISOString(),
-            }
-
-            // Add the subtask to the parent's subtasks array
-            parentTask.subtasks.push(newSubtask)
-
-            // Update the parent task with the modified subtasks array
-            await updateDoc(parentTaskRef, {
-              subtasks: parentTask.subtasks,
-              updatedAt: serverTimestamp(),
-            })
-
-            console.log(`Subtask ${taskId} added to parent task ${parentId}`)
-            return taskId
-          }
-
-          throw new Error(`Subtask with ID ${taskId} not found in parent task ${parentId}`)
-        }
-      } else {
-        console.warn(`Parent task ${parentId} has no subtasks array`)
-
-        // If we're creating if not exists and the parent has no subtasks array, create it
-        if (createIfNotExists) {
-          console.log(`Creating subtasks array for parent task ${parentId}`)
-
-          // Ensure the subtask has the correct ID and parentId
-          const newSubtask = {
-            ...updatedTask,
-            id: taskId,
-            parentId: parentId,
-            updatedAt: new Date().toISOString(),
-          }
-
-          // Update the parent task with the new subtasks array
-          await updateDoc(parentTaskRef, {
-            subtasks: [newSubtask],
-            updatedAt: serverTimestamp(),
-          })
-
-          console.log(`Subtask ${taskId} added to parent task ${parentId}`)
-          return taskId
-        }
-
-        throw new Error(`Parent task ${parentId} has no subtasks array`)
-      }
-    } else {
-      // This is a regular task, update it normally
-      console.log(`Updating regular task ${taskId}`)
-      const taskRef = doc(db, "tasks", taskId)
-
-      if (createIfNotExists) {
-        // Use set with merge option to create if not exists
-        await setDoc(
-          taskRef,
-          {
-            ...updatedTask,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        )
-        console.log(`Task ${taskId} created or updated successfully`)
-      } else {
-        // Use regular update
-        await updateDoc(taskRef, {
-          ...updatedTask,
+    if (createIfNotExists) {
+      // Use set with merge option to create if not exists
+      await setDoc(
+        taskRef,
+        {
+          ...taskDataWithoutSubtasks,
           updatedAt: serverTimestamp(),
-        })
-        console.log(`Task ${taskId} updated successfully`)
-      }
-
-      return taskId
+        },
+        { merge: true },
+      )
+      console.log(`Task ${taskId} created or updated successfully`)
+    } else {
+      // Use regular update
+      await updateDoc(taskRef, {
+        ...taskDataWithoutSubtasks,
+        updatedAt: serverTimestamp(),
+      })
+      console.log(`Task ${taskId} updated successfully`)
     }
+
+    return taskId
   } catch (error) {
     console.error("Error updating task:", error)
     throw error
   }
 }
 
+// Add this new function to sync task completion based on subtasks
+export async function syncTaskCompletionFromSubtasks(taskId: string): Promise<void> {
+  try {
+    // Get all subtasks for this task
+    const subtasks = await getSubtasksByParent(taskId)
+
+    if (!subtasks || subtasks.length === 0) {
+      return // No subtasks to sync from
+    }
+
+    // Calculate average completion
+    const totalCompletion = subtasks.reduce((sum, subtask) => sum + (subtask.completion || 0), 0)
+    const averageCompletion = Math.round(totalCompletion / subtasks.length)
+
+    // Determine task status based on subtasks
+    let taskStatus = "pending"
+    const allCompleted = subtasks.every((subtask) => subtask.status === "completed")
+    const anyInProgress = subtasks.some((subtask) => subtask.status === "in-progress")
+
+    if (allCompleted) {
+      taskStatus = "completed"
+    } else if (anyInProgress) {
+      taskStatus = "in-progress"
+    }
+
+    // Update only the task's completion and status
+    const taskRef = doc(db, "tasks", taskId)
+    await updateDoc(taskRef, {
+      completion: averageCompletion,
+      status: taskStatus,
+      updatedAt: serverTimestamp(),
+    })
+
+    console.log(`Synced task ${taskId} completion (${averageCompletion}%) and status (${taskStatus}) from subtasks`)
+  } catch (error) {
+    console.error(`Error syncing task completion from subtasks:`, error)
+    throw error
+  }
+}
+
+// Update the deleteTask function to also delete subtasks
 export async function deleteTask(taskId: string) {
   try {
     console.log(`Deleting task with ID: ${taskId}`)
+
+    // Get the task to check for subtasks
     const taskRef = doc(db, "tasks", taskId)
+    const taskDoc = await getDoc(taskRef)
+
+    if (!taskDoc.exists()) {
+      console.log(`Task ${taskId} not found, nothing to delete`)
+      return
+    }
+
+    const taskData = taskDoc.data()
+
+    // Delete all subtasks first
+    if (taskData.subtaskIds && taskData.subtaskIds.length > 0) {
+      const batch = writeBatch(db)
+
+      for (const subtaskId of taskData.subtaskIds) {
+        const subtaskRef = doc(db, "subtasks", subtaskId)
+        batch.delete(subtaskRef)
+      }
+
+      await batch.commit()
+      console.log(`Deleted ${taskData.subtaskIds.length} subtasks for task ${taskId}`)
+    }
+
+    // Now delete the task itself
     await deleteDoc(taskRef)
     console.log(`Task ${taskId} deleted successfully`)
   } catch (error) {
@@ -321,47 +325,6 @@ export async function getSubtaskById(subtaskId: string, parentTaskId: string) {
     }
   } catch (error) {
     console.error("Error fetching subtask:", error)
-    throw error
-  }
-}
-
-// Add this function to update a specific subtask
-export async function updateSubtask(parentTaskId: string, subtaskId: string, updatedData: any) {
-  try {
-    console.log(`Updating subtask ${subtaskId} in parent ${parentTaskId}`)
-
-    // Get the parent task
-    const taskDoc = await getDoc(doc(db, "tasks", parentTaskId))
-
-    if (!taskDoc.exists()) {
-      throw new Error(`Parent task ${parentTaskId} not found`)
-    }
-
-    const taskData = taskDoc.data()
-
-    // Find the subtask index
-    const subtaskIndex = taskData.subtasks?.findIndex((st: any) => st.id === subtaskId)
-
-    if (subtaskIndex === -1 || subtaskIndex === undefined) {
-      throw new Error(`Subtask ${subtaskId} not found in parent task`)
-    }
-
-    // Create a new subtasks array with the updated subtask
-    const updatedSubtasks = [...taskData.subtasks]
-    updatedSubtasks[subtaskIndex] = {
-      ...updatedSubtasks[subtaskIndex],
-      ...updatedData,
-    }
-
-    // Update the parent task with the new subtasks array
-    await updateDoc(doc(db, "tasks", parentTaskId), {
-      subtasks: updatedSubtasks,
-    })
-
-    console.log(`Subtask ${subtaskId} updated successfully`)
-    return true
-  } catch (error) {
-    console.error("Error updating subtask:", error)
     throw error
   }
 }

@@ -211,7 +211,9 @@ export default function PeopleGanttChart() {
 
   // Handle subtask update
   const handleSubtaskUpdate = async (subtaskId: string, parentId: string, updatedData: Partial<SubTask>) => {
+    console.log(`Updating subtask ${subtaskId} in parent ${parentId} with data:`, updatedData)
     try {
+      console.log("Before updateTask call")
       // Find the parent task
       const parentTask = tasks?.find((task) => task.id === parentId)
 
@@ -224,6 +226,7 @@ export default function PeopleGanttChart() {
 
       // Update the parent task with the new subtasks array
       await updateTask(parentId, { ...parentTask, subtasks: updatedSubtasks })
+      console.log("After updateTask call")
 
       toast({
         title: "Subtask Updated",
@@ -344,11 +347,16 @@ export default function PeopleGanttChart() {
   const calculateStaffBurden = (staffId: string, staffTasks: Task[]): number => {
     const today = startOfDay(new Date())
 
+    // Add debugging
+    console.log(`Calculating burden for staff ${staffId} with ${staffTasks.length} tasks`)
+
     // Filter out past tasks
     const currentAndFutureTasks = staffTasks.filter((task) => {
       const taskEndDate = new Date(task.endDate)
       return isAfter(taskEndDate, today) || isSameDay(taskEndDate, today)
     })
+
+    console.log(`Found ${currentAndFutureTasks.length} current/future tasks`)
 
     if (currentAndFutureTasks.length === 0) return 0
 
@@ -356,8 +364,15 @@ export default function PeopleGanttChart() {
     let totalBurden = 0
 
     currentAndFutureTasks.forEach((task) => {
+      // Check if complexity and workload are defined
+      if (typeof task.complexity !== "number" || typeof task.workload !== "number") {
+        console.warn(`Task ${task.id} is missing complexity or workload values:`, task)
+        return // Skip this task
+      }
+
       // Calculate task burden (complexity + workload)
       const taskBurden = calculateTaskBurden(task)
+      console.log(`Task ${task.id} burden: ${taskBurden} (complexity: ${task.complexity}, workload: ${task.workload})`)
 
       // For multi-assignee tasks, divide the burden by the number of assignees
       const assigneeCount = task.assigneeIds?.length || 1
@@ -367,7 +382,10 @@ export default function PeopleGanttChart() {
     })
 
     // Return average burden
-    return totalBurden / currentAndFutureTasks.length
+    const averageBurden = totalBurden / currentAndFutureTasks.length
+    console.log(`Final average burden: ${averageBurden}`)
+
+    return Number.parseFloat(averageBurden.toFixed(1))
   }
 
   // Get earliest and latest dates for a staff member's tasks
@@ -806,7 +824,14 @@ export default function PeopleGanttChart() {
                                           <div className="grid grid-cols-[250px_1fr]">
                                             <div
                                               className="p-3 pl-24 font-medium border-r flex items-center gap-2 sticky left-0 bg-background/95 z-10"
-                                              onClick={() => openSubtaskDetail(subtask)}
+                                              onClick={() => {
+                                                // Ensure parentId is set
+                                                const subtaskWithParent = {
+                                                  ...subtask,
+                                                  parentId: task.id,
+                                                }
+                                                openSubtaskDetail(subtaskWithParent)
+                                              }}
                                             >
                                               <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-1">
@@ -838,7 +863,13 @@ export default function PeopleGanttChart() {
                                                 task={subtask}
                                                 startDate={startDate}
                                                 endDate={endDate}
-                                                onClick={() => openSubtaskDetail(subtask)}
+                                                onClick={() => {
+                                                  const subtaskWithParent = {
+                                                    ...subtask,
+                                                    parentId: task.id,
+                                                  }
+                                                  openSubtaskDetail(subtaskWithParent)
+                                                }}
                                                 isParent={false}
                                                 columnWidth={columnWidth}
                                               />
