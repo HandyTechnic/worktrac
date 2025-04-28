@@ -17,6 +17,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/contexts/auth-context"
+import { createWorkspaceInvitation } from "@/lib/firebase/workspace"
 
 const inviteFormSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address" }),
@@ -28,11 +31,14 @@ type InviteFormValues = z.infer<typeof inviteFormSchema>
 interface InviteMemberDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onInvite?: (email: string, role: string) => void
+  workspaceId: string
+  onSuccess: () => void
 }
 
-export default function InviteMemberDialog({ open, onOpenChange, onInvite }: InviteMemberDialogProps) {
+export default function InviteMemberDialog({ open, onOpenChange, workspaceId, onSuccess }: InviteMemberDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const { toast } = useToast()
+  const { user } = useAuth()
 
   const form = useForm<InviteFormValues>({
     resolver: zodResolver(inviteFormSchema),
@@ -42,17 +48,67 @@ export default function InviteMemberDialog({ open, onOpenChange, onInvite }: Inv
     },
   })
 
-  function onSubmit(data: InviteFormValues) {
+  const onSubmit = async (data: InviteFormValues) => {
     setIsSubmitting(true)
 
-    // Simulate API call
-    setTimeout(() => {
-      if (onInvite) {
-        onInvite(data.email, data.role)
+    try {
+      if (!user) {
+        throw new Error("You must be logged in to invite members")
       }
-      form.reset()
+
+      // Validate workspaceId
+      if (!workspaceId || typeof workspaceId !== "string") {
+        console.error("Invalid workspaceId:", workspaceId)
+        throw new Error("Invalid workspace ID")
+      }
+
+      // Validate email
+      if (!data.email || typeof data.email !== "string") {
+        console.error("Invalid email:", data.email)
+        throw new Error("Invalid email address")
+      }
+
+      // Validate role
+      if (!data.role || typeof data.role !== "string") {
+        console.error("Invalid role:", data.role)
+        throw new Error("Invalid role")
+      }
+
+      // Get user ID - ensure we have a valid string
+      const userId = user.id || user.uid
+      if (!userId || typeof userId !== "string") {
+        console.error("Invalid user ID:", userId)
+        throw new Error("User ID is missing or invalid")
+      }
+
+      // Log all parameters for debugging
+      console.log("Invitation parameters:", {
+        email: data.email,
+        workspaceId,
+        role: data.role,
+        invitedBy: userId,
+      })
+
+      // Call createWorkspaceInvitation function with validated parameters
+      await createWorkspaceInvitation(data.email.trim(), workspaceId, data.role, userId)
+
+      toast({
+        title: "Invitation Sent",
+        description: `Invitation sent to ${data.email} with role ${data.role}.`,
+      })
+
+      onSuccess()
+      onOpenChange(false)
+    } catch (error) {
+      console.error("Error inviting member:", error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to send invitation. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
       setIsSubmitting(false)
-    }, 1000)
+    }
   }
 
   return (
@@ -94,7 +150,6 @@ export default function InviteMemberDialog({ open, onOpenChange, onInvite }: Inv
                     <SelectContent>
                       <SelectItem value="admin">Admin</SelectItem>
                       <SelectItem value="member">Member</SelectItem>
-                      <SelectItem value="viewer">Viewer</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />

@@ -20,45 +20,24 @@ import type { Task } from "@/lib/types"
 export default function MyTasks() {
   const router = useRouter()
   const { user } = useAuth()
-  const { tasks, loading, updateTask } = useTasks()
+  const { myTasks, loading, updateTask } = useTasks()
   const { currentWorkspace } = useWorkspace()
   const [searchTerm, setSearchTerm] = useState("")
   const [activeTab, setActiveTab] = useState<"active" | "completed">("active")
-  const userRole = user?.role || "member" // Default to "member" if user or role is undefined
 
   // Add state for the task detail dialog
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [isTaskDetailOpen, setIsTaskDetailOpen] = useState(false)
 
-  // Get user's tasks
-  const getUserTasks = () => {
-    if (!tasks || !user) return []
-
-    // For workspace owners, show all tasks in the workspace
-    if (userRole === "owner") {
-      return tasks
-    }
-
-    // For regular members, only show tasks where they are directly assigned
-    // or have accepted subtasks
-    return tasks.filter((task) => {
-      // Check if user is directly assigned to the task
-      const isDirectlyAssigned = task.assigneeIds?.includes(user.id)
-
-      // Check if user is assigned to any subtasks
-      const isAssignedToSubtask = task.subtasks?.some((subtask) => subtask.assigneeIds?.includes(user.id))
-
-      return isDirectlyAssigned || isAssignedToSubtask
-    })
-  }
-
-  const userTasks = getUserTasks()
-
-  // Filter based on search term and active/completed status
-  const filteredTasks = userTasks.filter((task) => {
+  // Filter based on search term, active/completed status, and user permissions
+  const filteredTasks = myTasks.filter((task) => {
     const matchesSearch = task.title.toLowerCase().includes(searchTerm.toLowerCase())
     const isCompleted = task.status === "completed" || task.status === "approved"
-    return matchesSearch && ((activeTab === "active" && !isCompleted) || (activeTab === "completed" && isCompleted))
+
+    // Only show tasks in the appropriate tab
+    const matchesTab = (activeTab === "active" && !isCompleted) || (activeTab === "completed" && isCompleted)
+
+    return matchesSearch && matchesTab
   })
 
   // Sort tasks by due date

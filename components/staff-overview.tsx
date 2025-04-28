@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
@@ -23,21 +23,35 @@ export default function StaffOverview() {
   const [selectedTask, setSelectedTask] = useState(null)
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
 
+  // Use a ref to track if we've already loaded staff members
+  const hasLoadedRef = useRef(false)
+
   const { toast } = useToast()
   const { tasks, updateTask } = useTasks()
   const { currentWorkspace } = useWorkspace()
 
+  // Load staff members only once when the component mounts or workspace changes
   useEffect(() => {
     const loadMembers = async () => {
       if (!currentWorkspace) return
 
+      // Skip if we've already loaded for this workspace
+      if (hasLoadedRef.current && staffMembers.length > 0) {
+        console.log("Staff members already loaded, skipping redundant fetch")
+        return
+      }
+
       try {
+        console.log("Loading staff members for workspace:", currentWorkspace.id)
         setLoading(true)
+
         // Get workspace members
         const members = await getWorkspaceMembers(currentWorkspace.id)
+        console.log(`Loaded ${members.length} workspace members`)
 
         // Get user details
         const users = await getAllUsers()
+        console.log(`Loaded ${users.length} user details`)
 
         // Combine data
         const membersWithDetails = members
@@ -54,47 +68,55 @@ export default function StaffOverview() {
           })
           .filter(Boolean)
 
+        console.log(`Processed ${membersWithDetails.length} staff members with details`)
         setStaffMembers(membersWithDetails)
+
         if (membersWithDetails.length > 0 && !selectedStaff) {
           setSelectedStaff(membersWithDetails[0].id)
         }
+
+        // Mark as loaded
+        hasLoadedRef.current = true
       } catch (error) {
         console.error("Error loading staff members:", error)
+        toast({
+          title: "Error",
+          description: "Failed to load staff members. Please try again.",
+          variant: "destructive",
+        })
       } finally {
         setLoading(false)
       }
     }
 
     loadMembers()
-  }, [currentWorkspace, selectedStaff])
+  }, [currentWorkspace, toast])
 
-  // Add a function to calculate staff with burden
-  const getStaffWithBurden = () => {
+  // Handle staff selection without triggering data reload
+  const handleStaffSelect = useCallback((staffId) => {
+    console.log(`Selecting staff member: ${staffId}`)
+    setSelectedStaff(staffId)
+  }, [])
+
+  // Memoize staff burden calculations to prevent recalculation on every render
+  const staffWithBurden = useMemo(() => {
     if (!tasks || !staffMembers.length) return []
 
+    console.log(`Calculating burden for ${staffMembers.length} staff members with ${tasks.length} tasks`)
     const today = startOfDay(new Date())
-
-    console.log(`Getting staff with burden for ${staffMembers.length} staff members with ${tasks.length} total tasks`)
 
     return staffMembers.map((staff) => {
       // Get current and future tasks for this staff member
       const activeTasks = tasks.filter(
         (task) =>
-          task.assigneeIds.includes(staff.id) &&
+          task.assigneeIds?.includes(staff.id) &&
           task.status !== "approved" &&
           (isAfter(new Date(task.endDate), today) || isSameDay(new Date(task.endDate), today)),
       )
 
       const completedTasks = tasks.filter(
-        (task) => task.assigneeIds.includes(staff.id) && (task.status === "completed" || task.status === "approved"),
+        (task) => task.assigneeIds?.includes(staff.id) && (task.status === "completed" || task.status === "approved"),
       )
-
-      console.log(`Staff ${staff.name} (${staff.id}) has ${activeTasks.length} active tasks`)
-
-      // Log task details for debugging
-      activeTasks.forEach((task) => {
-        console.log(`Task ${task.id}: "${task.title}" - complexity: ${task.complexity}, workload: ${task.workload}`)
-      })
 
       // Calculate average burden
       let totalBurden = 0
@@ -102,22 +124,16 @@ export default function StaffOverview() {
       activeTasks.forEach((task) => {
         // Ensure task has complexity and workload values
         if (typeof task.complexity !== "number" || typeof task.workload !== "number") {
-          console.warn(`Task ${task.id} is missing complexity or workload values:`, task)
           return // Skip this task
         }
 
         const taskBurden = calculateTaskBurden(task)
         // Adjust burden for multi-assignee tasks
-        const adjustedBurden = taskBurden / (task.assigneeIds.length || 1)
+        const adjustedBurden = taskBurden / (task.assigneeIds?.length || 1)
         totalBurden += adjustedBurden
-
-        console.log(
-          `Task ${task.id} burden: ${adjustedBurden.toFixed(1)} (${taskBurden} / ${task.assigneeIds.length} assignees)`,
-        )
       })
 
       const burdenScore = activeTasks.length > 0 ? Number.parseFloat((totalBurden / activeTasks.length).toFixed(1)) : 0
-      console.log(`Final burden score for ${staff.name}: ${burdenScore}`)
 
       return {
         ...staff,
@@ -128,54 +144,58 @@ export default function StaffOverview() {
         totalBurden,
       }
     })
-  }
+  }, [tasks, staffMembers])
 
-  const staffWithBurden = getStaffWithBurden()
+  // Memoize current staff to prevent unnecessary recalculations
+  const currentStaff = useMemo(
+    () => staffWithBurden.find((staff) => staff.id === selectedStaff),
+    [staffWithBurden, selectedStaff],
+  )
 
-  // Get the selected staff member
-  const currentStaff = staffWithBurden.find((staff) => staff.id === selectedStaff)
-
-  // Get burden color
-  const getBurdenColor = (score) => {
-    if (score < 4) return "text-success"
-    if (score < 7) return "text-warning"
-    return "text-destructive"
-  }
-
-  // Open task detail dialog
-  const openTaskDetail = (task) => {
+  // Task dialog handlers
+  const openTaskDetail = useCallback((task) => {
+    console.log(`Opening task detail for task: ${task.id}`)
     setSelectedTask(task)
     setTaskDialogOpen(true)
-  }
+  }, [])
 
-  // Close task detail dialog
-  const closeTaskDetail = () => {
+  const closeTaskDetail = useCallback(() => {
     setTaskDialogOpen(false)
     setTimeout(() => {
       setSelectedTask(null)
     }, 300)
-  }
+  }, [])
+
+  // Get burden color
+  const getBurdenColor = useCallback((score) => {
+    if (score < 4) return "text-success"
+    if (score < 7) return "text-warning"
+    return "text-destructive"
+  }, [])
 
   // Handle task update
-  const handleTaskUpdate = async (taskId, updatedData) => {
-    try {
-      await updateTask(taskId, updatedData)
-      toast({
-        title: "Task Updated",
-        description: "Task has been successfully updated.",
-      })
-      closeTaskDetail()
-    } catch (error) {
-      console.error("Error updating task:", error)
-      toast({
-        title: "Error",
-        description: "Failed to update task. Please try again.",
-        variant: "destructive",
-      })
-    }
-  }
+  const handleTaskUpdate = useCallback(
+    async (taskId, updatedData) => {
+      try {
+        await updateTask(taskId, updatedData)
+        toast({
+          title: "Task Updated",
+          description: "Task has been successfully updated.",
+        })
+        closeTaskDetail()
+      } catch (error) {
+        console.error("Error updating task:", error)
+        toast({
+          title: "Error",
+          description: "Failed to update task. Please try again.",
+          variant: "destructive",
+        })
+      }
+    },
+    [updateTask, toast, closeTaskDetail],
+  )
 
-  if (loading) {
+  if (loading && staffMembers.length === 0) {
     return (
       <div className="flex justify-center py-8">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -197,7 +217,7 @@ export default function StaffOverview() {
                 className={`w-full flex items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors ${
                   staff.id === selectedStaff ? "bg-muted" : ""
                 }`}
-                onClick={() => setSelectedStaff(staff.id)}
+                onClick={() => handleStaffSelect(staff.id)}
               >
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
@@ -283,9 +303,11 @@ export default function StaffOverview() {
                 <TabsContent value="active" className="space-y-4 pt-4">
                   {currentStaff.activeTasks.length > 0 ? (
                     currentStaff.activeTasks.map((task) => {
-                      const hasMultipleAssignees = task.assigneeIds.length > 1
+                      const hasMultipleAssignees = task.assigneeIds?.length > 1
                       const taskBurden = calculateTaskBurden(task)
-                      const adjustedBurden = Number.parseFloat((taskBurden / task.assigneeIds.length).toFixed(1))
+                      const adjustedBurden = Number.parseFloat(
+                        (taskBurden / (task.assigneeIds?.length || 1)).toFixed(1),
+                      )
 
                       return (
                         <div
@@ -323,7 +345,7 @@ export default function StaffOverview() {
                 <TabsContent value="completed" className="space-y-4 pt-4">
                   {currentStaff.completedTasks.length > 0 ? (
                     currentStaff.completedTasks.map((task) => {
-                      const hasMultipleAssignees = task.assigneeIds.length > 1
+                      const hasMultipleAssignees = task.assigneeIds?.length > 1
 
                       return (
                         <div

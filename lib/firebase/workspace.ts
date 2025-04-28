@@ -9,12 +9,14 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
-  onSnapshot,
   Timestamp,
+  onSnapshot,
 } from "firebase/firestore"
 import { db } from "@/lib/firebase/config"
 import type { Workspace, WorkspaceInvitation, WorkspaceRole } from "@/lib/types"
-import { createNotification } from "@/lib/firebase/notifications"
+import { sendWorkspaceInvitationEmail } from "@/lib/email-service"
+import { getUser } from "./auth"
+import { isWorkspaceMember } from "./workspace-member"
 
 // Create a new workspace
 export async function createWorkspace(
@@ -165,6 +167,35 @@ export async function getUserWorkspaces(userId: string): Promise<Workspace[]> {
   }
 }
 
+// Subscribe to user workspaces
+export function subscribeToUserWorkspaces(userId: string, callback: (workspaces: Workspace[]) => void): () => void {
+  console.log(`Subscribing to workspaces for user: ${userId}`)
+  const membershipQuery = query(collection(db, "workspaceMembers"), where("userId", "==", userId))
+
+  const unsubscribe = onSnapshot(
+    membershipQuery,
+    async (snapshot) => {
+      const workspaceIds = snapshot.docs.map((doc) => doc.data().workspaceId)
+      const workspaces: Workspace[] = []
+
+      for (const workspaceId of workspaceIds) {
+        const workspace = await getWorkspace(workspaceId)
+        if (workspace) {
+          workspaces.push(workspace)
+        }
+      }
+
+      console.log(`Received workspace update with ${workspaces.length} workspaces`)
+      callback(workspaces)
+    },
+    (error) => {
+      console.error("Error subscribing to workspaces:", error)
+    },
+  )
+
+  return unsubscribe
+}
+
 // Get workspace members
 export async function getWorkspaceMembers(workspaceId: string) {
   try {
@@ -232,7 +263,29 @@ export async function createWorkspaceInvitation(
   invitedBy: string,
 ): Promise<string> {
   try {
-    // Check if invitation already exists
+    // Validate all required parameters
+    if (!email) {
+      throw new Error("Email is required for workspace invitation")
+    }
+    if (!workspaceId) {
+      throw new Error("Workspace ID is required for workspace invitation")
+    }
+    if (!role) {
+      throw new Error("Role is required for workspace invitation")
+    }
+    if (!invitedBy) {
+      throw new Error("Inviter ID is required for workspace invitation")
+    }
+
+    // Log parameters for debugging
+    console.log("Creating workspace invitation with parameters:", {
+      email,
+      workspaceId,
+      role,
+      invitedBy,
+    })
+
+    // Check if invitation already exists - only proceed if all parameters are valid
     const existingQuery = query(
       collection(db, "workspaceInvitations"),
       where("email", "==", email),
@@ -243,7 +296,9 @@ export async function createWorkspaceInvitation(
 
     if (!existingDocs.empty) {
       // Return existing invitation ID
-      return existingDocs.docs[0].id
+      const existingInvitationId = existingDocs.docs[0].id
+      console.log(`Invitation already exists with ID: ${existingInvitationId}`)
+      return existingInvitationId
     }
 
     // Create new invitation
@@ -254,7 +309,8 @@ export async function createWorkspaceInvitation(
     const expiresAt = new Date()
     expiresAt.setDate(expiresAt.getDate() + 7)
 
-    await setDoc(invitationRef, {
+    // Create the invitation document with all required fields
+    const invitationData = {
       id: invitationId,
       email,
       workspaceId,
@@ -263,7 +319,36 @@ export async function createWorkspaceInvitation(
       status: "pending",
       createdAt: serverTimestamp(),
       expiresAt,
-    })
+    }
+
+    console.log("Creating invitation document:", invitationData)
+    await setDoc(invitationRef, invitationData)
+
+    console.log(`Created new invitation with ID: ${invitationId}`)
+
+    // Get inviter details
+    const inviter = await getUser(invitedBy)
+
+    if (!inviter || !inviter.email) {
+      console.warn(`Inviter with ID ${invitedBy} not found or has no email`)
+      return invitationId
+    }
+
+    // Get workspace details
+    const workspace = await getWorkspace(workspaceId)
+
+    if (!workspace) {
+      console.warn(`Workspace with ID ${workspaceId} not found`)
+      return invitationId
+    }
+
+    // Send email notification
+    try {
+      await sendWorkspaceInvitationEmail(email, inviter.name || "A team member", workspace.name)
+    } catch (emailError) {
+      console.error("Error sending invitation email:", emailError)
+      // Continue even if email fails - the invitation is still created
+    }
 
     return invitationId
   } catch (error) {
@@ -387,199 +472,6 @@ export async function declineWorkspaceInvitation(invitationId: string): Promise<
     })
   } catch (error) {
     console.error("Error declining workspace invitation:", error)
-    throw error
-  }
-}
-
-// Subscribe to user workspaces
-export function subscribeToUserWorkspaces(userId: string, callback: (workspaces: Workspace[]) => void) {
-  console.log("Setting up workspace subscription for user:", userId)
-
-  const membershipsQuery = query(collection(db, "workspaceMembers"), where("userId", "==", userId))
-
-  return onSnapshot(
-    membershipsQuery,
-    async (snapshot) => {
-      try {
-        console.log("Workspace membership snapshot received, docs:", snapshot.docs.length)
-
-        const workspaceIds = snapshot.docs.map((doc) => doc.data().workspaceId)
-
-        if (workspaceIds.length === 0) {
-          console.log("No workspace memberships found")
-          callback([])
-          return
-        }
-
-        const workspaces: Workspace[] = []
-
-        for (const workspaceId of workspaceIds) {
-          try {
-            const workspace = await getWorkspace(workspaceId)
-            if (workspace) {
-              workspaces.push(workspace)
-            } else {
-              console.log(`Workspace ${workspaceId} not found despite user having a membership record`)
-            }
-          } catch (workspaceError) {
-            console.error(`Error fetching workspace ${workspaceId}:`, workspaceError)
-          }
-        }
-
-        console.log("Returning workspaces from subscription:", workspaces.length)
-        callback(workspaces)
-      } catch (error) {
-        console.error("Error in workspace subscription:", error)
-        callback([])
-      }
-    },
-    (error) => {
-      console.error("Workspace subscription error:", error)
-      callback([])
-    },
-  )
-}
-
-// Get user's role in a workspace
-export async function getUserWorkspaceRole(userId: string, workspaceId: string): Promise<WorkspaceRole | null> {
-  try {
-    const memberQuery = query(
-      collection(db, "workspaceMembers"),
-      where("userId", "==", userId),
-      where("workspaceId", "==", workspaceId),
-    )
-
-    const memberDocs = await getDocs(memberQuery)
-
-    if (memberDocs.empty) {
-      return null
-    }
-
-    return memberDocs.docs[0].data().role as WorkspaceRole
-  } catch (error) {
-    console.error("Error getting user workspace role:", error)
-    throw error
-  }
-}
-
-// Check if user is a member of a workspace
-export async function isWorkspaceMember(userId: string, workspaceId: string): Promise<boolean> {
-  try {
-    const role = await getUserWorkspaceRole(userId, workspaceId)
-    return role !== null
-  } catch (error) {
-    console.error("Error checking workspace membership:", error)
-    throw error
-  }
-}
-
-// Update the inviteToWorkspace function to create notifications
-
-export async function inviteToWorkspace(
-  workspaceId: string,
-  email: string,
-  role: WorkspaceRole,
-  invitedBy: string,
-): Promise<string> {
-  try {
-    // Get workspace details first
-    const workspaceRef = doc(db, "workspaces", workspaceId)
-    const workspaceDoc = await getDoc(workspaceRef)
-
-    if (!workspaceDoc.exists()) {
-      throw new Error("Workspace not found")
-    }
-
-    const workspace = workspaceDoc.data()
-
-    // Check if user with email exists
-    const userQuery = query(collection(db, "users"), where("email", "==", email))
-    const userSnapshot = await getDocs(userQuery)
-
-    let userId = null
-
-    if (!userSnapshot.empty) {
-      userId = userSnapshot.docs[0].id
-
-      // Check if user is already a member
-      const memberQuery = query(
-        collection(db, "workspaceMembers"),
-        where("workspaceId", "==", workspaceId),
-        where("userId", "==", userId),
-      )
-
-      const memberSnapshot = await getDocs(memberQuery)
-
-      if (!memberSnapshot.empty) {
-        throw new Error("User is already a member of this workspace")
-      }
-    }
-
-    // Create invitation
-    const invitationRef = doc(collection(db, "workspaceInvitations"))
-    const invitationId = invitationRef.id
-
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + 7) // Expires in 7 days
-
-    await setDoc(invitationRef, {
-      id: invitationId,
-      email,
-      workspaceId,
-      workspaceName: workspace.name,
-      role,
-      invitedBy,
-      status: "pending",
-      createdAt: serverTimestamp(),
-      expiresAt,
-    })
-
-    // Get inviter details
-    const inviterRef = doc(db, "users", invitedBy)
-    const inviterDoc = await getDoc(inviterRef)
-
-    if (!inviterDoc.exists()) {
-      throw new Error("Inviter not found")
-    }
-
-    const inviter = inviterDoc.data()
-
-    // If user exists, create a notification
-    if (userId) {
-      await createNotification({
-        userId,
-        type: "workspace_invitation",
-        title: "Workspace Invitation",
-        message: `${inviter.name} has invited you to join the workspace "${workspace.name}" as a ${role}.`,
-        actionUrl: "/workspaces",
-        relatedId: invitationId,
-        metadata: {
-          workspaceId,
-          workspaceName: workspace.name,
-          inviterId: invitedBy,
-          inviterName: inviter.name,
-          role,
-        },
-      })
-    }
-
-    return invitationId
-  } catch (error) {
-    console.error("Error inviting to workspace:", error)
-    throw error
-  }
-}
-
-// Update workspace permissions
-export async function updateWorkspacePermissions(workspaceId: string, permissions: any): Promise<void> {
-  try {
-    const workspaceRef = doc(db, "workspaces", workspaceId)
-    await updateDoc(workspaceRef, {
-      permissions: permissions,
-      updatedAt: serverTimestamp(),
-    })
-  } catch (error) {
-    console.error("Error updating workspace permissions:", error)
     throw error
   }
 }

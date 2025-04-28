@@ -76,7 +76,6 @@ export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
   const [loading, setLoading] = useState(false)
   const [workspaceMembers, setWorkspaceMembers] = useState([])
   const [loadingMembers, setLoadingMembers] = useState(true)
-  const [selectedAssignees, setSelectedAssignees] = useState<string[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Fetch workspace members
@@ -198,7 +197,7 @@ export default function TaskCreationDialog({ onClose, parentTaskId = null }) {
       const newTask = {
         title,
         description,
-        assigneeIds: selectedAssignees,
+        assigneeIds: assigneeIds, // Use assigneeIds instead of selectedAssignees
         startDate: startDate.toISOString().split("T")[0],
         endDate: endDate.toISOString().split("T")[0],
         status: "pending",

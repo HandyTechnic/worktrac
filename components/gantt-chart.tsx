@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { format, addDays, subDays, eachDayOfInterval, isSameDay, startOfDay, endOfDay } from "date-fns"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -58,10 +58,39 @@ export default function GanttChart() {
 
   const { tasks, loading, updateTask } = useTasks()
   const { user } = useAuth()
-  const { currentWorkspace } = useWorkspace()
+  const { currentWorkspace, userRole } = useWorkspace()
 
-  // Add this inside the component
-  const showCompletedTasks = currentWorkspace?.settings?.showCompletedTasks !== false
+  // Get tasks based on user role - using the tasks directly from context
+  // This avoids the infinite loop by not calling getFilteredTasks during render
+  const filteredTasks = useMemo(() => {
+    if (!user || !tasks.length) return []
+
+    return tasks.filter((task) => {
+      // Check if user is directly assigned to the task
+      const isDirectlyAssigned = task.assigneeIds?.includes(user.id)
+
+      // Check if user is assigned to any subtask
+      const isAssignedToSubtask = task.subtasks?.some((subtask) => subtask.assigneeIds?.includes(user.id))
+
+      // Check if user created the task
+      const isTaskCreator = task.creatorId === user.id
+
+      // Apply role-based filtering
+      const isAdmin = userRole === "admin" || userRole === "owner"
+      const isManager = userRole === "manager"
+
+      if (isAdmin) {
+        // Admins and owners can see all tasks in the workspace
+        return true
+      } else if (isManager) {
+        // Managers can see tasks they created or are assigned to
+        return isTaskCreator || isDirectlyAssigned || isAssignedToSubtask
+      } else {
+        // Regular users can only see tasks they're directly assigned to or subtasks they're part of
+        return isDirectlyAssigned || isAssignedToSubtask
+      }
+    })
+  }, [tasks, user, userRole])
 
   // Calculate visible days based on zoom level
   const daysToShow = DAYS_PER_ZOOM[zoomLevel - 1]
@@ -186,8 +215,8 @@ export default function GanttChart() {
       await updateSubtask(subtaskId, updatedData)
 
       // Update the local state to reflect the changes
-      if (tasks) {
-        const updatedTasks = [...tasks].map((task) => {
+      if (filteredTasks) {
+        const updatedTasks = [...filteredTasks].map((task) => {
           if (task.id === parentId && task.subtasks) {
             // Update the subtask in the local state
             const updatedSubtasks = task.subtasks.map((st) => (st.id === subtaskId ? { ...st, ...updatedData } : st))
@@ -219,13 +248,6 @@ export default function GanttChart() {
     }
   }
 
-  // Filter tasks based on user role
-  const isManager = user?.userRole === "manager" || user?.userRole === "admin" || user?.userRole === "owner"
-
-  // Then update the filteredTasks logic to respect this setting
-  // No need to filter tasks here as it's already done in the TaskContext
-  const filteredTasks = tasks || []
-
   const loadStaffMembers = async () => {
     try {
       const users = await getAllUsers()
@@ -253,6 +275,42 @@ export default function GanttChart() {
             <AlertTitle>No Workspace Selected</AlertTitle>
             <AlertDescription>Please select or create a workspace to view and manage tasks.</AlertDescription>
           </Alert>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (loading) {
+    return (
+      <Card className="overflow-hidden">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
+          </div>
+          <p className="mt-4 text-center text-muted-foreground">Loading tasks...</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (filteredTasks.length === 0) {
+    return (
+      <Card className="overflow-hidden">
+        <CardContent className="p-6">
+          <div className="text-center">
+            <h3 className="mb-2 text-xl font-semibold">No tasks found</h3>
+            <p className="mb-6 text-muted-foreground">
+              {userRole === "admin" || userRole === "owner" || userRole === "manager"
+                ? "Create a task to get started with your project timeline."
+                : "You don't have any tasks assigned to you in this workspace."}
+            </p>
+            {(userRole === "admin" || userRole === "owner" || userRole === "manager") && (
+              <Button onClick={() => setShowTaskCreation(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Task
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
     )
@@ -287,9 +345,11 @@ export default function GanttChart() {
               Today
             </Button>
 
-            <Button size="sm" onClick={() => setShowTaskCreation(true)}>
-              <Plus className="h-4 w-4 mr-1" /> New Task
-            </Button>
+            {(userRole === "admin" || userRole === "owner" || userRole === "manager") && (
+              <Button size="sm" onClick={() => setShowTaskCreation(true)}>
+                <Plus className="h-4 w-4 mr-1" /> New Task
+              </Button>
+            )}
           </div>
         </div>
 
@@ -318,167 +378,156 @@ export default function GanttChart() {
 
             {/* Tasks with subtasks */}
             <div>
-              {loading ? (
-                <div className="p-8 text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-                  <p className="text-muted-foreground">Loading tasks...</p>
-                </div>
-              ) : filteredTasks.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">
-                  No tasks found. Click "New Task" to create one.
-                </div>
-              ) : (
-                filteredTasks.map((task) => (
-                  <div key={task.id} className="group">
-                    {/* Parent task row */}
-                    <div className="grid grid-cols-[250px_1fr] border-b hover:bg-muted/30 transition-colors">
-                      <div
-                        className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10 cursor-pointer"
-                        onClick={() => openTaskDetail(task)}
+              {filteredTasks.map((task) => (
+                <div key={task.id} className="group">
+                  {/* Parent task row */}
+                  <div className="grid grid-cols-[250px_1fr] border-b hover:bg-muted/30 transition-colors">
+                    <div
+                      className="p-3 font-medium border-r flex items-center gap-2 sticky left-0 bg-background z-10 cursor-pointer"
+                      onClick={() => openTaskDetail(task)}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-5 w-5 p-0 transition-transform",
+                          expandedTasks.includes(task.id) && "rotate-90",
+                        )}
+                        onClick={(e) => toggleTaskExpansion(task.id, e)}
+                        disabled={!task.subtasks || task.subtasks.length === 0}
                       >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={cn(
-                            "h-5 w-5 p-0 transition-transform",
-                            expandedTasks.includes(task.id) && "rotate-90",
-                          )}
-                          onClick={(e) => toggleTaskExpansion(task.id, e)}
-                          disabled={!task.subtasks || task.subtasks.length === 0}
-                        >
-                          {task.subtasks && task.subtasks.length > 0 && <ChevronRightIcon className="h-4 w-4" />}
-                        </Button>
+                        {task.subtasks && task.subtasks.length > 0 && <ChevronRightIcon className="h-4 w-4" />}
+                      </Button>
 
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1">
-                            <ProgressIndicator status={task.status} size="sm" />
-                            <span className="font-medium truncate">{task.title}</span>
-                          </div>
-
-                          <div className="flex items-center text-xs text-muted-foreground mt-0.5">
-                            <Users className="h-3 w-3 mr-1" />
-                            <span className="truncate">{formatAssignees(task.assigneeIds || [], staffMembers)}</span>
-                          </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <ProgressIndicator status={task.status} size="sm" />
+                          <span className="font-medium truncate">{task.title}</span>
                         </div>
-                      </div>
 
-                      <div
-                        className="relative h-16"
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
-                        }}
-                      >
-                        {days.map((day) => (
-                          <div
-                            key={day.toString()}
-                            className={`border-r last:border-r-0 ${isSameDay(day, new Date()) ? "bg-muted/50" : ""}`}
-                          ></div>
-                        ))}
-
-                        {/* Task bar */}
-                        <TaskBar
-                          task={task}
-                          startDate={startDate}
-                          endDate={endDate}
-                          onClick={() => openTaskDetail(task)}
-                          isParent={true}
-                          columnWidth={columnWidth}
-                          className="shadow-sm hover:shadow-md transition-shadow"
-                        />
+                        <div className="flex items-center text-xs text-muted-foreground mt-0.5">
+                          <Users className="h-3 w-3 mr-1" />
+                          <span className="truncate">{formatAssignees(task.assigneeIds || [], staffMembers)}</span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Subtasks (if expanded) */}
-                    {task.subtasks && task.subtasks.length > 0 && expandedTasks.includes(task.id) && (
-                      <div className="relative">
-                        {/* Vertical line from parent to subtasks */}
+                    <div
+                      className="relative h-16"
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
+                      }}
+                    >
+                      {days.map((day) => (
                         <div
-                          className="absolute left-6 w-px bg-border"
-                          style={{
-                            top: "0",
-                            height: `${task.subtasks.length * 48}px`,
-                          }}
-                        />
+                          key={day.toString()}
+                          className={`border-r last:border-r-0 ${isSameDay(day, new Date()) ? "bg-muted/50" : ""}`}
+                        ></div>
+                      ))}
 
-                        {task.subtasks.map((subtask, index) => {
-                          // Log subtask info for debugging
-                          console.log(`Rendering subtask ${subtask.id} for parent ${task.id}`, subtask)
+                      {/* Task bar */}
+                      <TaskBar
+                        task={task}
+                        startDate={startDate}
+                        endDate={endDate}
+                        onClick={() => openTaskDetail(task)}
+                        isParent={true}
+                        columnWidth={columnWidth}
+                        className="shadow-sm hover:shadow-md transition-shadow"
+                      />
+                    </div>
+                  </div>
 
-                          return (
+                  {/* Subtasks (if expanded) */}
+                  {task.subtasks && task.subtasks.length > 0 && expandedTasks.includes(task.id) && (
+                    <div className="relative">
+                      {/* Vertical line from parent to subtasks */}
+                      <div
+                        className="absolute left-6 w-px bg-border"
+                        style={{
+                          top: "0",
+                          height: `${task.subtasks.length * 48}px`,
+                        }}
+                      />
+
+                      {task.subtasks.map((subtask, index) => {
+                        // Log subtask info for debugging
+                        console.log(`Rendering subtask ${subtask.id} for parent ${task.id}`, subtask)
+
+                        return (
+                          <div
+                            key={subtask.id}
+                            className="grid grid-cols-[250px_1fr] border-b last:border-b-0 bg-muted/5 relative"
+                          >
+                            {/* Horizontal line to subtask */}
+                            <div className="absolute left-6 w-8 h-px bg-border" style={{ top: "24px" }} />
+
                             <div
-                              key={subtask.id}
-                              className="grid grid-cols-[250px_1fr] border-b last:border-b-0 bg-muted/5 relative"
+                              className="p-3 font-medium border-r flex items-center gap-2 pl-16 sticky left-0 bg-background/95 z-10"
+                              onClick={() => {
+                                // Always ensure the parentId is set correctly
+                                const subtaskWithParent = {
+                                  ...subtask,
+                                  parentId: task.id,
+                                }
+                                openSubtaskDetail(subtaskWithParent)
+                              }}
                             >
-                              {/* Horizontal line to subtask */}
-                              <div className="absolute left-6 w-8 h-px bg-border" style={{ top: "24px" }} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1">
+                                  <ProgressIndicator status={subtask.status} size="sm" />
+                                  <span className="text-sm truncate">{subtask.title}</span>
+                                </div>
 
-                              <div
-                                className="p-3 font-medium border-r flex items-center gap-2 pl-16 sticky left-0 bg-background/95 z-10"
+                                <div className="flex items-center text-xs text-muted-foreground mt-0.5">
+                                  <Users className="h-3 w-3 mr-1" />
+                                  <span className="truncate">
+                                    {formatAssignees(subtask.assigneeIds || [], staffMembers)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div
+                              className="relative h-12"
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
+                              }}
+                            >
+                              {days.map((day) => (
+                                <div
+                                  key={day.toString()}
+                                  className={`border-r last:border-r-0 ${
+                                    isSameDay(day, new Date()) ? "bg-muted/50" : ""
+                                  }`}
+                                ></div>
+                              ))}
+
+                              {/* Subtask bar */}
+                              <TaskBar
+                                task={subtask}
+                                startDate={startDate}
+                                endDate={endDate}
                                 onClick={() => {
-                                  // Always ensure the parentId is set correctly
                                   const subtaskWithParent = {
                                     ...subtask,
                                     parentId: task.id,
                                   }
                                   openSubtaskDetail(subtaskWithParent)
                                 }}
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-1">
-                                    <ProgressIndicator status={subtask.status} size="sm" />
-                                    <span className="text-sm truncate">{subtask.title}</span>
-                                  </div>
-
-                                  <div className="flex items-center text-xs text-muted-foreground mt-0.5">
-                                    <Users className="h-3 w-3 mr-1" />
-                                    <span className="truncate">
-                                      {formatAssignees(subtask.assigneeIds || [], staffMembers)}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div
-                                className="relative h-12"
-                                style={{
-                                  display: "grid",
-                                  gridTemplateColumns: `repeat(${days.length}, ${columnWidth}px)`,
-                                }}
-                              >
-                                {days.map((day) => (
-                                  <div
-                                    key={day.toString()}
-                                    className={`border-r last:border-r-0 ${
-                                      isSameDay(day, new Date()) ? "bg-muted/50" : ""
-                                    }`}
-                                  ></div>
-                                ))}
-
-                                {/* Subtask bar */}
-                                <TaskBar
-                                  task={subtask}
-                                  startDate={startDate}
-                                  endDate={endDate}
-                                  onClick={() => {
-                                    const subtaskWithParent = {
-                                      ...subtask,
-                                      parentId: task.id,
-                                    }
-                                    openSubtaskDetail(subtaskWithParent)
-                                  }}
-                                  isParent={false}
-                                  columnWidth={columnWidth}
-                                />
-                              </div>
+                                isParent={false}
+                                columnWidth={columnWidth}
+                              />
                             </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>

@@ -330,15 +330,30 @@ export async function getSubtaskById(subtaskId: string, parentTaskId: string) {
 }
 
 // Real-time updates
+// Modify the subscribeToTasks function to filter tasks at the data retrieval level
 export function subscribeToTasks(
   workspaceId: string,
   callback: (snapshot: QuerySnapshot<DocumentData>) => void,
   errorCallback: (error: Error) => void,
+  userId?: string, // Add userId parameter to filter tasks
 ) {
   try {
-    console.log(`Subscribing to tasks for workspace: ${workspaceId}`)
+    console.log(`Subscribing to tasks for workspace: ${workspaceId}${userId ? ` and user: ${userId}` : ""}`)
     const tasksRef = collection(db, "tasks")
-    const q = query(tasksRef, where("workspaceId", "==", workspaceId), orderBy("startDate", "asc"))
+
+    // Create base query with workspace filter
+    let q = query(tasksRef, where("workspaceId", "==", workspaceId), orderBy("startDate", "asc"))
+
+    // If userId is provided and not an admin/owner, filter tasks at the database level
+    if (userId) {
+      // We can't directly filter for subtasks at the Firestore level, so we'll do that in memory
+      q = query(
+        tasksRef,
+        where("workspaceId", "==", workspaceId),
+        where("assigneeIds", "array-contains", userId),
+        orderBy("startDate", "asc"),
+      )
+    }
 
     return onSnapshot(
       q,

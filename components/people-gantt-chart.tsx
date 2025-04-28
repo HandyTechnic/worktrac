@@ -66,11 +66,15 @@ export default function PeopleGanttChart() {
 
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const { tasks, loading, updateTask, deleteTask } = useTasks()
-  const showCompletedTasks = currentWorkspace?.settings?.showCompletedTasks !== false
+  const { getFilteredTasks, loading, updateTask, removeTask } = useTasks()
 
-  // Check if user is a manager or owner
-  const isManagerOrOwner = user?.userRole === "owner" || user?.userRole === "admin" || user?.userRole === "manager"
+  // Get all tasks for admin view - this is intentional for the people view
+  // as admins need to see all tasks across all users
+  const allTasks = hasPermission
+    ? getFilteredTasks({
+        showCompleted: currentWorkspace?.settings?.showCompletedTasks !== false,
+      })
+    : []
 
   // Calculate visible days based on zoom level
   const daysToShow = DAYS_PER_ZOOM[zoomLevel - 1]
@@ -215,7 +219,7 @@ export default function PeopleGanttChart() {
     try {
       console.log("Before updateTask call")
       // Find the parent task
-      const parentTask = tasks?.find((task) => task.id === parentId)
+      const parentTask = allTasks?.find((task) => task.id === parentId)
 
       if (!parentTask) {
         throw new Error("Parent task not found")
@@ -255,7 +259,7 @@ export default function PeopleGanttChart() {
       closeTaskDetail()
 
       // Then delete the task
-      await deleteTask(taskId)
+      await removeTask(taskId)
 
       // Clean up any expanded state for this task
       setExpandedTasks((prev) => {
@@ -296,7 +300,7 @@ export default function PeopleGanttChart() {
       closeSubtaskDetail()
 
       // Find the parent task
-      const parentTask = tasks?.find((task) => task.id === parentId)
+      const parentTask = allTasks?.find((task) => task.id === parentId)
 
       if (!parentTask) {
         throw new Error("Parent task not found")
@@ -430,8 +434,8 @@ export default function PeopleGanttChart() {
     })
 
     // Add all tasks to each assignee if they are assigned to that task
-    if (tasks) {
-      tasks.forEach((task) => {
+    if (allTasks) {
+      allTasks.forEach((task) => {
         if (task.assigneeIds && task.assigneeIds.length > 0) {
           task.assigneeIds.forEach((assigneeId) => {
             const assigneeKey = assigneeId.toString()
@@ -561,10 +565,6 @@ export default function PeopleGanttChart() {
 
       return { width: `${widthPercent}%`, className: bgColor }
     }
-
-    // Then update the filteredTasks logic to respect this setting
-    // No need to filter tasks here as it's already done in the TaskContext
-    const filteredTasks = tasks || []
 
     content = (
       <Card className="overflow-hidden border-0 shadow-none">
