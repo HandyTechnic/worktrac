@@ -16,6 +16,7 @@ import { useTasks } from "@/contexts/task-context"
 import { useWorkspace } from "@/contexts/workspace-context"
 import { getAllUsers } from "@/lib/firebase/auth"
 import { getWorkspaceMembers } from "@/lib/firebase/workspace"
+import { TelegramConnectionWidget } from "./telegram-connection-widget"
 
 export default function Dashboard() {
   const [showTaskCreation, setShowTaskCreation] = useState(false)
@@ -279,6 +280,10 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <TelegramConnectionWidget />
       </div>
 
       <ManagerApproval compact={true} />

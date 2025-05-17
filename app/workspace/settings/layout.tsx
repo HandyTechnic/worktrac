@@ -1,16 +1,18 @@
 "use client"
 
 import { type ReactNode, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { useAuth } from "@/contexts/auth-context"
 import { useWorkspace } from "@/contexts/workspace-context"
-import { PageLayout } from "@/components/page-layout"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Building, Users, Shield } from "lucide-react"
+import { PageLayout } from "@/components/page-layout"
 
 export default function WorkspaceSettingsLayout({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const { currentWorkspace, userRole } = useWorkspace()
   const router = useRouter()
+  const pathname = usePathname()
 
   useEffect(() => {
     if (!loading && !user) {
@@ -34,17 +36,31 @@ export default function WorkspaceSettingsLayout({ children }: { children: ReactN
     )
   }
 
+  console.log("Current workspace in layout:", currentWorkspace)
+
   return (
     <PageLayout title="Workspace Settings" description="Manage your workspace settings and preferences">
-      <Tabs defaultValue="profile" className="w-full">
+      <Tabs
+        defaultValue={
+          pathname.includes("/workspace/settings/members")
+            ? "members"
+            : pathname.includes("/workspace/settings/permissions")
+              ? "permissions"
+              : "profile"
+        }
+        className="w-full"
+      >
         <TabsList className="grid w-full max-w-md grid-cols-3 mb-8">
           <TabsTrigger value="profile" onClick={() => router.push("/workspace/settings/profile")}>
+            <Building className="h-4 w-4 mr-2" />
             Profile
           </TabsTrigger>
           <TabsTrigger value="members" onClick={() => router.push("/workspace/settings/members")}>
+            <Users className="h-4 w-4 mr-2" />
             Members
           </TabsTrigger>
           <TabsTrigger value="permissions" onClick={() => router.push("/workspace/settings/permissions")}>
+            <Shield className="h-4 w-4 mr-2" />
             Permissions
           </TabsTrigger>
         </TabsList>

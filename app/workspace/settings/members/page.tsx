@@ -14,23 +14,23 @@ export default function WorkspaceMembersPage() {
   const [invitations, setInvitations] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
-  const { workspace } = useWorkspace()
+  const { currentWorkspace } = useWorkspace()
   const { toast } = useToast()
   const { user } = useAuth()
 
   useEffect(() => {
     async function loadData() {
-      if (!workspace?.id) {
+      if (!currentWorkspace?.id) {
         console.log("No workspace ID available")
         setLoading(false)
         return
       }
 
       try {
-        console.log("Loading workspace members for workspace:", workspace.id)
+        console.log("Loading workspace members for workspace:", currentWorkspace.id)
         const [membersData, invitationsData] = await Promise.all([
-          getWorkspaceMembers(workspace.id),
-          getWorkspaceInvitations(workspace.id),
+          getWorkspaceMembers(currentWorkspace.id),
+          getWorkspaceInvitations(currentWorkspace.id),
         ])
 
         console.log("Loaded members:", membersData.length)
@@ -51,12 +51,12 @@ export default function WorkspaceMembersPage() {
     }
 
     loadData()
-  }, [workspace, toast])
+  }, [currentWorkspace, toast])
 
   const handleInviteSuccess = () => {
     // Reload invitations
-    if (workspace?.id) {
-      getWorkspaceInvitations(workspace.id)
+    if (currentWorkspace?.id) {
+      getWorkspaceInvitations(currentWorkspace.id)
         .then((data) => setInvitations(data))
         .catch((error) => {
           console.error("Error reloading invitations:", error)
@@ -74,12 +74,12 @@ export default function WorkspaceMembersPage() {
     )
   }
 
-  if (!workspace) {
+  if (!currentWorkspace) {
     return <div>No workspace selected</div>
   }
 
   // Debug workspace ID
-  console.log("Current workspace ID:", workspace.id)
+  console.log("Current workspace ID:", currentWorkspace.id)
   console.log("Current user:", user)
 
   return (
@@ -133,7 +133,7 @@ export default function WorkspaceMembersPage() {
       <InviteMemberDialog
         open={inviteDialogOpen}
         onOpenChange={setInviteDialogOpen}
-        workspaceId={workspace.id}
+        workspaceId={currentWorkspace.id}
         onSuccess={handleInviteSuccess}
       />
     </div>

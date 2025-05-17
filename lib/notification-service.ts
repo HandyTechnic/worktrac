@@ -5,9 +5,12 @@ import { getTask } from "./firebase/db"
 import { getWorkspace } from "./firebase/workspace"
 import { doc, getDoc, updateDoc } from "firebase/firestore"
 import { db } from "./firebase/config"
+// Add import for the telegram formatter
+import { sendTelegramMessage, getUserTelegramChatId } from "./telegram-service"
+import { formatTelegramNotification } from "./telegram-formatter"
 
 // Notification types
-export type NotificationChannel = "push" | "email" | "both" | "none"
+export type NotificationChannel = "push" | "email" | "telegram" | "both" | "none"
 
 // User notification preferences interface
 export interface NotificationPreferences {
@@ -17,6 +20,7 @@ export interface NotificationPreferences {
   taskApproval: NotificationChannel
   workspaceInvitation: NotificationChannel
   comments: NotificationChannel
+  telegramEnabled?: boolean
 }
 
 // Default notification preferences
@@ -27,6 +31,7 @@ export const defaultNotificationPreferences: NotificationPreferences = {
   taskApproval: "both",
   workspaceInvitation: "both",
   comments: "push",
+  telegramEnabled: false,
 }
 
 // Get user notification preferences
@@ -137,8 +142,44 @@ export async function sendNotification({
     if (channels === "email" || channels === "both") {
       await sendEmailNotification(userId, type, title, message, actionUrl, metadata)
     }
+
+    // Send Telegram notification if enabled
+    if (channels === "telegram" || (channels === "both" && preferences.telegramEnabled)) {
+      await sendTelegramNotification(userId, type, title, message, actionUrl, metadata)
+    }
   } catch (error) {
     console.error("Error sending notification:", error)
+  }
+}
+
+// Add this new function for sending Telegram notifications
+async function sendTelegramNotification(
+  userId: string,
+  type: string,
+  title: string,
+  message: string,
+  actionUrl?: string,
+  metadata?: Record<string, any>,
+): Promise<void> {
+  try {
+    // Get user's Telegram chat ID
+    const chatId = await getUserTelegramChatId(userId)
+
+    if (!chatId) {
+      // User hasn't linked their Telegram account
+      return
+    }
+
+    // Format the message for Telegram
+    const formattedMessage = await formatTelegramNotification(type, title, message, actionUrl, metadata)
+
+    // Send the message
+    await sendTelegramMessage(chatId, formattedMessage, {
+      parseMode: "Markdown",
+      disableWebPagePreview: false,
+    })
+  } catch (error) {
+    console.error("Error sending Telegram notification:", error)
   }
 }
 

@@ -41,11 +41,11 @@ export function SettingsDropdown({ collapsed = false }: SettingsDropdownProps) {
           <User className="mr-2 h-4 w-4" />
           Profile
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => router.push("/settings/notifications")}>
+        <DropdownMenuItem onClick={() => router.push("/profile?tab=notifications")}>
           <Bell className="mr-2 h-4 w-4" />
           Notifications
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => router.push("/settings/appearance")}>
+        <DropdownMenuItem onClick={() => router.push("/profile?tab=appearance")}>
           <Moon className="mr-2 h-4 w-4" />
           Appearance
         </DropdownMenuItem>

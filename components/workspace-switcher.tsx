@@ -7,8 +7,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
@@ -79,7 +79,10 @@ export default function WorkspaceSwitcher({ collapsed = false }: WorkspaceSwitch
             variant="ghost"
             size="icon"
             className="h-9 w-9"
-            onClick={() => router.push("/workspace/settings")}
+            onClick={(e) => {
+              e.preventDefault()
+              router.push("/workspace/settings/profile")
+            }}
             title="Workspace Settings"
           >
             <Settings size={16} />

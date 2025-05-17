@@ -18,6 +18,8 @@ import {
   User,
   CheckSquare,
   Settings,
+  LogOut,
+  Moon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -203,7 +205,12 @@ export function MainNavigation() {
                     <DropdownMenuLabel>My Account</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => router.push("/profile")}>Profile</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => router.push("/settings")}>Settings</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => router.push("/profile?tab=notifications")}>
+                      Notifications
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => router.push("/profile?tab=appearance")}>
+                      Appearance
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => signOut?.()}>Log out</DropdownMenuItem>
                   </DropdownMenuContent>
@@ -233,10 +240,23 @@ export function MainNavigation() {
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>My Account</DropdownMenuLabel>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => router.push("/profile")}>Profile</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => router.push("/settings")}>Settings</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => router.push("/profile")}>
+                        <User className="h-4 w-4 mr-2" />
+                        Profile
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => router.push("/profile?tab=notifications")}>
+                        <Bell className="h-4 w-4 mr-2" />
+                        Notifications
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => router.push("/profile?tab=appearance")}>
+                        <Moon className="h-4 w-4 mr-2" />
+                        Appearance
+                      </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => signOut?.()}>Log out</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => signOut?.()}>
+                        <LogOut className="h-4 w-4 mr-2" />
+                        Log out
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </>
