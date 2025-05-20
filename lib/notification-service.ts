@@ -9,6 +9,9 @@ import { db } from "./firebase/config"
 import { sendTelegramMessage, getUserTelegramChatId } from "./telegram-service"
 import { formatTelegramNotification } from "./telegram-formatter"
 
+// Add import for the error handler utilities
+import { logError, safeExecute } from "./utils/error-handler"
+
 // Notification types
 export type NotificationChannel = "push" | "email" | "telegram" | "both" | "none"
 
@@ -239,6 +242,7 @@ async function sendEmailNotification(
     const user = await getUser(userId)
 
     if (!user || !user.email) {
+      console.log(`[EMAIL SERVICE] Cannot send email: User ${userId} has no email address`)
       return
     }
 
@@ -248,12 +252,27 @@ async function sendEmailNotification(
       case "subtask_invitation": {
         const taskId = metadata?.taskId
         if (taskId) {
-          const task = await getTask(taskId)
-          const inviter = metadata?.inviterId ? await getUser(metadata.inviterId) : null
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending task invitation",
+            async () => {
+              const task = await getTask(taskId)
+              const inviter = metadata?.inviterId ? await getUser(metadata.inviterId) : null
 
-          if (task && inviter) {
-            await sendTaskInvitationEmail(user.email, inviter.name || "A team member", task.title)
-          }
+              if (task && inviter) {
+                const result = await sendTaskInvitationEmail(user.email, inviter.name || "A team member", task.title)
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send task invitation email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send task invitation: Missing task or inviter data`)
+                return { success: false, error: "Missing task or inviter data" }
+              }
+            },
+            { success: false, error: "Failed to process task invitation" },
+          )
         }
         break
       }
@@ -261,12 +280,31 @@ async function sendEmailNotification(
       case "workspace_invitation": {
         const workspaceId = metadata?.workspaceId
         if (workspaceId) {
-          const workspace = await getWorkspace(workspaceId)
-          const inviter = metadata?.inviterId ? await getUser(metadata.inviterId) : null
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending workspace invitation",
+            async () => {
+              const workspace = await getWorkspace(workspaceId)
+              const inviter = metadata?.inviterId ? await getUser(metadata.inviterId) : null
 
-          if (workspace && inviter) {
-            await sendWorkspaceInvitationEmail(user.email, inviter.name || "A team member", workspace.name)
-          }
+              if (workspace && inviter) {
+                const result = await sendWorkspaceInvitationEmail(
+                  user.email,
+                  inviter.name || "A team member",
+                  workspace.name,
+                )
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send workspace invitation email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send workspace invitation: Missing workspace or inviter data`)
+                return { success: false, error: "Missing workspace or inviter data" }
+              }
+            },
+            { success: false, error: "Failed to process workspace invitation" },
+          )
         }
         break
       }
@@ -276,6 +314,7 @@ async function sendEmailNotification(
       case "task_rejected": {
         // These would be implemented with specific email templates
         console.log(`[EMAIL SERVICE] Sending ${type} email to ${user.name} (${user.email})`)
+        // Future implementation would call the API route with appropriate data
         break
       }
 
@@ -287,6 +326,6 @@ async function sendEmailNotification(
         break
     }
   } catch (error) {
-    console.error("Error sending email notification:", error)
+    logError("EMAIL SERVICE", "Error sending email notification", error)
   }
 }
