@@ -13,12 +13,14 @@ type AuthContextType = {
   user: StaffMember | null
   loading: boolean
   setUser: (user: StaffMember | null) => void
+  signOut: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
   setUser: () => {},
+  signOut: async () => {},
 })
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -150,7 +152,23 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [router, pathname, toast])
 
-  return <AuthContext.Provider value={{ user, loading, setUser }}>{children}</AuthContext.Provider>
+  const signOut = async () => {
+    try {
+      console.log("Signing out user")
+      await auth.signOut()
+      setUser(null)
+      // The onAuthStateChanged listener will handle the redirect
+    } catch (error) {
+      console.error("Error signing out:", error)
+      toast({
+        title: "Error",
+        description: "Failed to sign out. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  return <AuthContext.Provider value={{ user, loading, setUser, signOut }}>{children}</AuthContext.Provider>
 }
 
 export const useAuth = () => useContext(AuthContext)

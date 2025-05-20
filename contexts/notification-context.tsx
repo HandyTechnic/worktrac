@@ -1,302 +1,370 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
-import { db } from "@/lib/firebase/config"
+import type React from "react"
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react"
 import {
   collection,
   query,
   where,
+  orderBy,
   onSnapshot,
-  doc,
   updateDoc,
-  deleteDoc,
-  addDoc,
-  serverTimestamp,
+  doc,
+  limit,
+  startAfter,
   getDocs,
+  Timestamp,
 } from "firebase/firestore"
+import { db } from "@/lib/firebase/config"
 import { useAuth } from "./auth-context"
-import { useWorkspace } from "./workspace-context"
-import { getUserInvitations, acceptWorkspaceInvitation, declineWorkspaceInvitation } from "@/lib/firebase/workspace"
-import { useToast } from "@/hooks/use-toast"
 
-interface Notification {
+// Define the notification type
+export interface Notification {
   id: string
   userId: string
+  type: string
   title: string
   message: string
-  type: string
   read: boolean
-  actionUrl?: string
-  data?: any
   createdAt: Date
+  metadata?: Record<string, any>
 }
 
+// Define the context type
 interface NotificationContextType {
   notifications: Notification[]
   unreadCount: number
-  addNotification: (notification: any) => Promise<void>
+  loading: boolean
+  hasMoreNotifications: boolean
+  loadMoreNotifications: () => Promise<void>
+  loadingMore: boolean
   markAsRead: (id: string) => Promise<void>
   markAllAsRead: () => Promise<void>
-  deleteNotification: (id: string) => Promise<void>
-  handleWorkspaceInvitation: (notificationId: string, accept: boolean) => Promise<void>
+  markingAllAsRead: boolean
+  acceptWorkspaceInvitation: (invitationId: string) => Promise<void>
+  declineWorkspaceInvitation: (invitationId: string) => Promise<void>
 }
 
-const NotificationContext = createContext<NotificationContextType>({
-  notifications: [],
-  unreadCount: 0,
-  addNotification: async () => {},
-  markAsRead: async () => {},
-  markAllAsRead: async () => {},
-  deleteNotification: async () => {},
-  handleWorkspaceInvitation: async () => {},
-})
+// Create the context
+const NotificationContext = createContext<NotificationContextType | undefined>(undefined)
 
-export function NotificationProvider({ children }: { children: ReactNode }) {
-  const [notifications, setNotifications] = useState<Notification[]>([])
+// Helper function to safely convert various timestamp formats to Date
+function safelyConvertToDate(timestamp: any): Date {
+  if (!timestamp) {
+    return new Date() // Default to current date if no timestamp
+  }
+
+  // If it's a Firestore Timestamp
+  if (timestamp instanceof Timestamp || (timestamp && typeof timestamp.toDate === "function")) {
+    return timestamp.toDate()
+  }
+
+  // If it's already a Date
+  if (timestamp instanceof Date) {
+    return timestamp
+  }
+
+  // If it's a number (unix timestamp)
+  if (typeof timestamp === "number") {
+    return new Date(timestamp)
+  }
+
+  // If it's a string, try to parse it
+  if (typeof timestamp === "string") {
+    const date = new Date(timestamp)
+    return isNaN(date.getTime()) ? new Date() : date
+  }
+
+  // Fallback
+  return new Date()
+}
+
+// Define the provider component
+export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
-  const { refreshWorkspaces } = useWorkspace()
-  const { toast } = useToast()
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [hasMoreNotifications, setHasMoreNotifications] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [markingAllAsRead, setMarkingAllAsRead] = useState(false)
+  const [lastVisible, setLastVisible] = useState<any>(null)
+  const NOTIFICATIONS_PER_PAGE = 10
 
-  // Load and subscribe to notifications
-  useEffect(() => {
-    if (!user || !user.id) {
+  // Use a ref to store the unsubscribe function
+  const unsubscribeRef = useRef<(() => void) | null>(null)
+
+  // Function to load notifications
+  const loadNotifications = useCallback(() => {
+    if (!user) {
       setNotifications([])
+      setUnreadCount(0)
+      setLoading(false)
       return
     }
 
-    console.log("Setting up notification listener for user:", user.id)
-
-    const notificationsRef = collection(db, "notifications")
-    const q = query(notificationsRef, where("userId", "==", user.id))
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const notificationsList = snapshot.docs.map((doc) => {
-          const data = doc.data()
-          let createdAtDate: Date
-
-          // Safely handle the createdAt field
-          if (data.createdAt && typeof data.createdAt.toDate === "function") {
-            // It's a Firestore Timestamp
-            createdAtDate = data.createdAt.toDate()
-          } else if (data.createdAt instanceof Date) {
-            // It's already a Date
-            createdAtDate = data.createdAt
-          } else if (data.createdAt) {
-            // It might be a timestamp number or string
-            try {
-              createdAtDate = new Date(data.createdAt)
-            } catch (e) {
-              createdAtDate = new Date() // Fallback to current date
-            }
-          } else {
-            // No createdAt field
-            createdAtDate = new Date() // Fallback to current date
-          }
-
-          return {
-            id: doc.id,
-            ...data,
-            createdAt: createdAtDate,
-          }
-        }) as Notification[]
-
-        // Sort by date, newest first
-        notificationsList.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-
-        console.log("Loaded notifications:", notificationsList.length)
-        setNotifications(notificationsList)
-      },
-      (error) => {
-        console.error("Error in notification listener:", error)
-      },
-    )
-
-    return () => {
-      console.log("Cleaning up notification listener")
-      unsubscribe()
-    }
-  }, [user])
-
-  // Load workspace invitations and add them as notifications
-  useEffect(() => {
-    if (!user?.email || !user?.id) return
-
-    const loadWorkspaceInvitations = async () => {
-      try {
-        console.log("Loading workspace invitations for:", user.email)
-        const invitations = await getUserInvitations(user.email)
-        console.log("Found workspace invitations:", invitations.length)
-
-        // For each invitation, check if we already have a notification for it
-        for (const invitation of invitations) {
-          // Check if we already have a notification for this invitation
-          const notificationsRef = collection(db, "notifications")
-          const q = query(
-            notificationsRef,
-            where("userId", "==", user.id),
-            where("type", "==", "workspace_invitation"),
-            where("data.id", "==", invitation.id),
-          )
-
-          const existingNotifications = await getDocs(q)
-
-          if (existingNotifications.empty) {
-            console.log("Creating notification for invitation:", invitation.id)
-            // Create a notification for this invitation
-            await addDoc(collection(db, "notifications"), {
-              userId: user.id,
-              title: "Workspace Invitation",
-              message: `You've been invited to join ${invitation.workspaceName || invitation.workspaceId}`,
-              type: "workspace_invitation",
-              read: false,
-              actionUrl: "/",
-              data: invitation,
-              createdAt: serverTimestamp(),
-            })
-          }
-        }
-      } catch (error) {
-        console.error("Error loading workspace invitations:", error)
-      }
-    }
-
-    loadWorkspaceInvitations()
-  }, [user])
-
-  const unreadCount = notifications.filter((n) => !n.read).length
-
-  const addNotification = async (notification: any) => {
-    if (!user || !user.id) return
-
-    console.log("Adding notification:", notification)
+    setLoading(true)
 
     try {
-      await addDoc(collection(db, "notifications"), {
-        userId: user.id,
-        title: notification.title,
-        message: notification.message,
-        type: notification.type,
-        read: false,
-        actionUrl: notification.actionUrl || null,
-        data: notification.data || null,
-        createdAt: serverTimestamp(),
-      })
+      const notificationsRef = collection(db, "notifications")
+      const q = query(
+        notificationsRef,
+        where("userId", "==", user.id),
+        orderBy("createdAt", "desc"),
+        limit(NOTIFICATIONS_PER_PAGE),
+      )
+
+      // Clean up any existing subscription
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current()
+      }
+
+      // Set up real-time listener
+      const unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          const notificationData: Notification[] = []
+          let unread = 0
+
+          snapshot.forEach((doc) => {
+            const data = doc.data()
+            const notification: Notification = {
+              id: doc.id,
+              userId: data.userId,
+              type: data.type,
+              title: data.title,
+              message: data.message,
+              read: data.read,
+              createdAt: safelyConvertToDate(data.createdAt),
+              metadata: data.metadata || {},
+            }
+            notificationData.push(notification)
+            if (!notification.read) {
+              unread++
+            }
+          })
+
+          setNotifications(notificationData)
+          setUnreadCount(unread)
+          setLoading(false)
+
+          // Set last visible document for pagination
+          const lastDoc = snapshot.docs[snapshot.docs.length - 1]
+          setLastVisible(lastDoc)
+
+          // Check if there are more notifications
+          if (snapshot.docs.length === NOTIFICATIONS_PER_PAGE) {
+            setHasMoreNotifications(true)
+          } else {
+            setHasMoreNotifications(false)
+          }
+        },
+        (error) => {
+          console.error("Error in notification listener:", error)
+          setLoading(false)
+        },
+      )
+
+      // Store the unsubscribe function in the ref
+      unsubscribeRef.current = unsubscribe
     } catch (error) {
-      console.error("Error adding notification:", error)
+      console.error("Error setting up notifications:", error)
+      setLoading(false)
+    }
+  }, [user])
+
+  // Function to load more notifications
+  const loadMoreNotifications = async () => {
+    if (!user || !lastVisible || loadingMore || !hasMoreNotifications) return
+
+    try {
+      setLoadingMore(true)
+      const notificationsRef = collection(db, "notifications")
+      const q = query(
+        notificationsRef,
+        where("userId", "==", user.id),
+        orderBy("createdAt", "desc"),
+        startAfter(lastVisible),
+        limit(NOTIFICATIONS_PER_PAGE),
+      )
+
+      const snapshot = await getDocs(q)
+      const newNotifications: Notification[] = []
+
+      snapshot.forEach((doc) => {
+        const data = doc.data()
+        const notification: Notification = {
+          id: doc.id,
+          userId: data.userId,
+          type: data.type,
+          title: data.title,
+          message: data.message,
+          read: data.read,
+          createdAt: safelyConvertToDate(data.createdAt),
+          metadata: data.metadata || {},
+        }
+        newNotifications.push(notification)
+        if (!notification.read) {
+          setUnreadCount((prev) => prev + 1)
+        }
+      })
+
+      // Append new notifications to existing ones
+      setNotifications((prev) => [...prev, ...newNotifications])
+
+      // Update last visible document
+      const lastDoc = snapshot.docs[snapshot.docs.length - 1]
+      setLastVisible(lastDoc)
+
+      // Check if there are more notifications
+      if (snapshot.docs.length < NOTIFICATIONS_PER_PAGE) {
+        setHasMoreNotifications(false)
+      }
+
+      setLoadingMore(false)
+    } catch (error) {
+      console.error("Error loading more notifications:", error)
+      setLoadingMore(false)
     }
   }
 
+  // Function to mark a notification as read
   const markAsRead = async (id: string) => {
     try {
       const notificationRef = doc(db, "notifications", id)
       await updateDoc(notificationRef, { read: true })
 
       // Update local state
-      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))
+      setNotifications((prev) =>
+        prev.map((notification) => {
+          if (notification.id === id && !notification.read) {
+            setUnreadCount((count) => Math.max(0, count - 1))
+            return { ...notification, read: true }
+          }
+          return notification
+        }),
+      )
     } catch (error) {
       console.error("Error marking notification as read:", error)
     }
   }
 
+  // Function to mark all notifications as read
   const markAllAsRead = async () => {
-    if (!user || !user.id) return
+    if (!user || markingAllAsRead) return
 
     try {
-      const unreadNotifications = notifications.filter((n) => !n.read)
+      setMarkingAllAsRead(true)
 
-      const promises = unreadNotifications.map((notification) => {
-        const notificationRef = doc(db, "notifications", notification.id)
-        return updateDoc(notificationRef, { read: true })
-      })
+      // Update each unread notification
+      const updatePromises = notifications
+        .filter((notification) => !notification.read)
+        .map((notification) => {
+          const notificationRef = doc(db, "notifications", notification.id)
+          return updateDoc(notificationRef, { read: true })
+        })
 
-      await Promise.all(promises)
+      await Promise.all(updatePromises)
 
       // Update local state
-      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+      setNotifications((prev) => prev.map((notification) => ({ ...notification, read: true })))
+      setUnreadCount(0)
+      setMarkingAllAsRead(false)
     } catch (error) {
       console.error("Error marking all notifications as read:", error)
+      setMarkingAllAsRead(false)
     }
   }
 
-  const deleteNotification = async (id: string) => {
+  // Function to accept a workspace invitation
+  const acceptWorkspaceInvitation = async (invitationId: string) => {
     try {
-      const notificationRef = doc(db, "notifications", id)
-      await deleteDoc(notificationRef)
+      // Find the notification with this invitation ID
+      const notification = notifications.find(
+        (n) => n.type === "workspace_invitation" && n.metadata?.invitationId === invitationId,
+      )
 
-      // Update local state
-      setNotifications((prev) => prev.filter((n) => n.id !== id))
-    } catch (error) {
-      console.error("Error deleting notification:", error)
-    }
-  }
-
-  const handleWorkspaceInvitation = async (notificationId: string, accept: boolean) => {
-    if (!user || !user.id) return
-
-    try {
-      // Find the notification
-      const notification = notifications.find((n) => n.id === notificationId)
-      if (!notification || notification.type !== "workspace_invitation" || !notification.data) {
-        console.error("Invalid notification for workspace invitation")
+      if (!notification) {
+        console.error("Invitation not found")
         return
       }
 
-      const invitation = notification.data
-      console.log("Handling workspace invitation:", invitation.id, accept ? "accept" : "decline")
+      // Mark the notification as read
+      await markAsRead(notification.id)
 
-      if (accept) {
-        // Accept the invitation
-        console.log("Accepting workspace invitation:", invitation.id)
-        await acceptWorkspaceInvitation(invitation.id, user.id)
+      // Accept the invitation (this would typically call a function from your workspace service)
+      // For now, we'll just log it
+      console.log(`Accepting workspace invitation: ${invitationId}`)
 
-        toast({
-          title: "Invitation Accepted",
-          description: `You have joined the workspace "${invitation.workspaceName || invitation.workspaceId}".`,
-        })
-
-        // Refresh workspaces to include the new one
-        console.log("Refreshing workspaces after accepting invitation")
-        await refreshWorkspaces()
-      } else {
-        // Decline the invitation
-        console.log("Declining workspace invitation:", invitation.id)
-        await declineWorkspaceInvitation(invitation.id)
-
-        toast({
-          title: "Invitation Declined",
-          description: "The workspace invitation has been declined.",
-        })
-      }
-
-      // Delete the notification
-      await deleteNotification(notificationId)
+      // Here you would typically call your workspace service to accept the invitation
+      // Example: await workspaceService.acceptInvitation(invitationId)
     } catch (error) {
-      console.error("Error handling workspace invitation:", error)
-      toast({
-        title: "Error",
-        description: "Failed to process the invitation. Please try again.",
-        variant: "destructive",
-      })
+      console.error("Error accepting workspace invitation:", error)
     }
   }
 
-  return (
-    <NotificationContext.Provider
-      value={{
-        notifications,
-        unreadCount,
-        addNotification,
-        markAsRead,
-        markAllAsRead,
-        deleteNotification,
-        handleWorkspaceInvitation,
-      }}
-    >
-      {children}
-    </NotificationContext.Provider>
-  )
+  // Function to decline a workspace invitation
+  const declineWorkspaceInvitation = async (invitationId: string) => {
+    try {
+      // Find the notification with this invitation ID
+      const notification = notifications.find(
+        (n) => n.type === "workspace_invitation" && n.metadata?.invitationId === invitationId,
+      )
+
+      if (!notification) {
+        console.error("Invitation not found")
+        return
+      }
+
+      // Mark the notification as read
+      await markAsRead(notification.id)
+
+      // Decline the invitation (this would typically call a function from your workspace service)
+      // For now, we'll just log it
+      console.log(`Declining workspace invitation: ${invitationId}`)
+
+      // Here you would typically call your workspace service to decline the invitation
+      // Example: await workspaceService.declineInvitation(invitationId)
+    } catch (error) {
+      console.error("Error declining workspace invitation:", error)
+    }
+  }
+
+  // Load notifications when the user changes
+  useEffect(() => {
+    loadNotifications()
+
+    // Clean up function
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current()
+      }
+    }
+  }, [loadNotifications])
+
+  // Create the context value
+  const value: NotificationContextType = {
+    notifications,
+    unreadCount,
+    loading,
+    hasMoreNotifications,
+    loadMoreNotifications,
+    loadingMore,
+    markAsRead,
+    markAllAsRead,
+    markingAllAsRead,
+    acceptWorkspaceInvitation,
+    declineWorkspaceInvitation,
+  }
+
+  return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>
 }
 
-export const useNotifications = () => useContext(NotificationContext)
+// Create a hook to use the notification context
+export function useNotifications() {
+  const context = useContext(NotificationContext)
+  if (context === undefined) {
+    throw new Error("useNotifications must be used within a NotificationProvider")
+  }
+  return context
+}

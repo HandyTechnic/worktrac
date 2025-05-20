@@ -22,8 +22,14 @@ export function SettingsDropdown({ collapsed = false }: SettingsDropdownProps) {
   const router = useRouter()
 
   const handleSignOut = async () => {
-    await signOut()
-    router.push("/login")
+    try {
+      await signOut()
+      // The redirect will be handled by the auth state listener in AuthContext
+    } catch (error) {
+      console.error("Error during sign out:", error)
+      // If there's an error, try to redirect anyway
+      router.push("/login")
+    }
   }
 
   return (

@@ -4,70 +4,129 @@ import { useState } from "react"
 import { Bell } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useNotifications } from "@/contexts/notification-context"
+import { Skeleton } from "@/components/ui/skeleton"
+import { ScrollArea } from "@/components/ui/scroll-area"
 
-interface NotificationCenterProps {
-  collapsed?: boolean
-}
-
-export function NotificationCenter({ collapsed = false }: NotificationCenterProps) {
-  const [unreadCount, setUnreadCount] = useState(3)
+export function NotificationCenter() {
+  const [open, setOpen] = useState(false)
+  const {
+    notifications,
+    unreadCount,
+    loading,
+    hasMoreNotifications,
+    loadMoreNotifications,
+    loadingMore,
+    markAllAsRead,
+    markingAllAsRead,
+  } = useNotifications()
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="relative">
-          <Bell size={20} />
+          <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground">
-              {unreadCount}
+            <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-medium text-white">
+              {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}
-          {!collapsed && <span className="sr-only">Notifications</span>}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-80 p-0" align="end">
-        <div className="border-b p-3">
-          <h4 className="font-medium">Notifications</h4>
-          <p className="text-xs text-muted-foreground">You have {unreadCount} unread notifications</p>
+        <div className="flex items-center justify-between border-b p-3">
+          <h3 className="font-medium">Notifications</h3>
+          {notifications.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={markAllAsRead}
+              disabled={markingAllAsRead || unreadCount === 0}
+              className="h-auto text-xs"
+            >
+              {markingAllAsRead ? "Marking..." : "Mark all as read"}
+            </Button>
+          )}
         </div>
-        <div className="max-h-80 overflow-y-auto">
-          <div className="flex items-start gap-3 border-b p-3">
-            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-              <Bell size={14} className="text-primary" />
+        <ScrollArea className="h-[300px]">
+          {loading ? (
+            <div className="p-3 space-y-3">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
             </div>
-            <div>
-              <p className="text-sm font-medium">New task assigned</p>
-              <p className="text-xs text-muted-foreground">You have been assigned a new task</p>
-              <p className="text-xs text-muted-foreground">2 hours ago</p>
+          ) : notifications.length === 0 ? (
+            <div className="flex h-[300px] items-center justify-center text-center text-sm text-muted-foreground">
+              <p>No notifications yet</p>
             </div>
-          </div>
-          <div className="flex items-start gap-3 border-b p-3">
-            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-              <Bell size={14} className="text-primary" />
+          ) : (
+            <div className="space-y-1 p-1">
+              {notifications.map((notification) => (
+                <NotificationItem key={notification.id} notification={notification} />
+              ))}
+              {hasMoreNotifications && (
+                <div className="p-2 text-center">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={loadMoreNotifications}
+                    disabled={loadingMore}
+                    className="w-full text-xs"
+                  >
+                    {loadingMore ? "Loading..." : "Load more"}
+                  </Button>
+                </div>
+              )}
             </div>
-            <div>
-              <p className="text-sm font-medium">Task deadline approaching</p>
-              <p className="text-xs text-muted-foreground">A task is due in 24 hours</p>
-              <p className="text-xs text-muted-foreground">1 day ago</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3 p-3">
-            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-              <Bell size={14} className="text-primary" />
-            </div>
-            <div>
-              <p className="text-sm font-medium">Workspace invitation</p>
-              <p className="text-xs text-muted-foreground">You have been invited to join a workspace</p>
-              <p className="text-xs text-muted-foreground">3 days ago</p>
-            </div>
-          </div>
-        </div>
-        <div className="border-t p-2">
-          <Button variant="ghost" size="sm" className="w-full justify-center">
-            Mark all as read
-          </Button>
-        </div>
+          )}
+        </ScrollArea>
       </PopoverContent>
     </Popover>
+  )
+}
+
+function NotificationItem({ notification }) {
+  const { markAsRead } = useNotifications()
+
+  const handleClick = () => {
+    if (!notification.read) {
+      markAsRead(notification.id)
+    }
+  }
+
+  // Format the date
+  const formatDate = (date) => {
+    const now = new Date()
+    const diff = now.getTime() - date.getTime()
+    const seconds = Math.floor(diff / 1000)
+    const minutes = Math.floor(seconds / 60)
+    const hours = Math.floor(minutes / 60)
+    const days = Math.floor(hours / 24)
+
+    if (days > 0) {
+      return `${days}d ago`
+    } else if (hours > 0) {
+      return `${hours}h ago`
+    } else if (minutes > 0) {
+      return `${minutes}m ago`
+    } else {
+      return "Just now"
+    }
+  }
+
+  return (
+    <div
+      className={`flex cursor-pointer items-start gap-3 rounded-md p-3 text-sm transition-colors hover:bg-muted ${
+        !notification.read ? "bg-muted/50" : ""
+      }`}
+      onClick={handleClick}
+    >
+      <div className="flex-1">
+        <div className="font-medium">{notification.title}</div>
+        <div className="text-xs text-muted-foreground">{notification.message}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{formatDate(notification.createdAt)}</div>
+      </div>
+      {!notification.read && <div className="mt-1 h-2 w-2 rounded-full bg-blue-500"></div>}
+    </div>
   )
 }

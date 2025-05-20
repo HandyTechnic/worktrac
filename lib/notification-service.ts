@@ -1,5 +1,15 @@
 import { createNotification } from "./firebase/notifications"
-import { sendTaskInvitationEmail, sendWorkspaceInvitationEmail } from "./email-service"
+import {
+  sendTaskInvitationEmail,
+  sendWorkspaceInvitationEmail,
+  sendTaskAssignmentEmail,
+  sendTaskCompletionEmail,
+  sendTaskApprovalRequestEmail,
+  sendTaskApprovedEmail,
+  sendTaskRejectedEmail,
+  sendCommentNotificationEmail,
+  sendEmail,
+} from "./email-service"
 import { getUser } from "./firebase/auth"
 import { getTask } from "./firebase/db"
 import { getWorkspace } from "./firebase/workspace"
@@ -246,6 +256,15 @@ async function sendEmailNotification(
       return
     }
 
+    // Get the app URL for building links
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://worktrac.app"
+
+    // Format action URL to be a full URL if it's not already
+    let fullActionUrl = actionUrl
+    if (actionUrl && !actionUrl.startsWith("http")) {
+      fullActionUrl = `${appUrl}${actionUrl.startsWith("/") ? actionUrl : `/${actionUrl}`}`
+    }
+
     // Send different types of emails based on notification type
     switch (type) {
       case "task_invitation":
@@ -258,9 +277,15 @@ async function sendEmailNotification(
             async () => {
               const task = await getTask(taskId)
               const inviter = metadata?.inviterId ? await getUser(metadata.inviterId) : null
+              const workspace = metadata?.workspaceId ? await getWorkspace(metadata.workspaceId) : null
 
               if (task && inviter) {
-                const result = await sendTaskInvitationEmail(user.email, inviter.name || "A team member", task.title)
+                const result = await sendTaskInvitationEmail(
+                  user.email,
+                  inviter.name || "A team member",
+                  task.title,
+                  workspace?.name || "",
+                )
 
                 if (!result.success) {
                   logError("EMAIL SERVICE", "Failed to send task invitation email", result.error)
@@ -309,20 +334,247 @@ async function sendEmailNotification(
         break
       }
 
-      case "task_approval_request":
-      case "task_approved":
+      case "task_assignment": {
+        const taskId = metadata?.taskId
+        if (taskId) {
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending task assignment notification",
+            async () => {
+              const task = await getTask(taskId)
+              const assigner = metadata?.assignerId ? await getUser(metadata.assignerId) : null
+
+              if (task && assigner) {
+                const result = await sendTaskAssignmentEmail(
+                  user.email,
+                  assigner.name || "A team member",
+                  task.title,
+                  task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "",
+                  `${appUrl}/task/${taskId}`,
+                )
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send task assignment email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send task assignment: Missing task or assigner data`)
+                return { success: false, error: "Missing task or assigner data" }
+              }
+            },
+            { success: false, error: "Failed to process task assignment" },
+          )
+        }
+        break
+      }
+
+      case "task_completed": {
+        const taskId = metadata?.taskId
+        if (taskId) {
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending task completion notification",
+            async () => {
+              const task = await getTask(taskId)
+              const completer = metadata?.completerId ? await getUser(metadata.completerId) : null
+
+              if (task && completer) {
+                const result = await sendTaskCompletionEmail(
+                  user.email,
+                  completer.name || "A team member",
+                  task.title,
+                  `${appUrl}/task/${taskId}`,
+                )
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send task completion email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send task completion: Missing task or completer data`)
+                return { success: false, error: "Missing task or completer data" }
+              }
+            },
+            { success: false, error: "Failed to process task completion" },
+          )
+        }
+        break
+      }
+
+      case "task_approval_request": {
+        const taskId = metadata?.taskId
+        if (taskId) {
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending task approval request",
+            async () => {
+              const task = await getTask(taskId)
+              const requester = metadata?.requesterId ? await getUser(metadata.requesterId) : null
+
+              if (task && requester) {
+                const result = await sendTaskApprovalRequestEmail(
+                  user.email,
+                  requester.name || "A team member",
+                  task.title,
+                  `${appUrl}/task/${taskId}?action=approve`,
+                )
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send task approval request email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send task approval request: Missing task or requester data`)
+                return { success: false, error: "Missing task or requester data" }
+              }
+            },
+            { success: false, error: "Failed to process task approval request" },
+          )
+        }
+        break
+      }
+
+      case "task_approved": {
+        const taskId = metadata?.taskId
+        if (taskId) {
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending task approved notification",
+            async () => {
+              const task = await getTask(taskId)
+              const approver = metadata?.approverId ? await getUser(metadata.approverId) : null
+
+              if (task && approver) {
+                const result = await sendTaskApprovedEmail(
+                  user.email,
+                  approver.name || "A team member",
+                  task.title,
+                  `${appUrl}/task/${taskId}`,
+                )
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send task approved email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send task approved: Missing task or approver data`)
+                return { success: false, error: "Missing task or approver data" }
+              }
+            },
+            { success: false, error: "Failed to process task approved notification" },
+          )
+        }
+        break
+      }
+
       case "task_rejected": {
-        // These would be implemented with specific email templates
-        console.log(`[EMAIL SERVICE] Sending ${type} email to ${user.name} (${user.email})`)
-        // Future implementation would call the API route with appropriate data
+        const taskId = metadata?.taskId
+        if (taskId) {
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending task rejected notification",
+            async () => {
+              const task = await getTask(taskId)
+              const rejector = metadata?.rejectorId ? await getUser(metadata.rejectorId) : null
+
+              if (task && rejector) {
+                const result = await sendTaskRejectedEmail(
+                  user.email,
+                  rejector.name || "A team member",
+                  task.title,
+                  metadata?.reason || "No reason provided",
+                  `${appUrl}/task/${taskId}`,
+                )
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send task rejected email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send task rejected: Missing task or rejector data`)
+                return { success: false, error: "Missing task or rejector data" }
+              }
+            },
+            { success: false, error: "Failed to process task rejected notification" },
+          )
+        }
+        break
+      }
+
+      case "comment_added": {
+        const taskId = metadata?.taskId
+        if (taskId) {
+          await safeExecute(
+            "EMAIL SERVICE",
+            "sending comment notification",
+            async () => {
+              const task = await getTask(taskId)
+              const commenter = metadata?.commenterId ? await getUser(metadata.commenterId) : null
+
+              if (task && commenter) {
+                const result = await sendCommentNotificationEmail(
+                  user.email,
+                  commenter.name || "A team member",
+                  task.title,
+                  metadata?.comment || "New comment",
+                  `${appUrl}/task/${taskId}#comments`,
+                )
+
+                if (!result.success) {
+                  logError("EMAIL SERVICE", "Failed to send comment notification email", result.error)
+                }
+                return result
+              } else {
+                console.log(`[EMAIL SERVICE] Cannot send comment notification: Missing task or commenter data`)
+                return { success: false, error: "Missing task or commenter data" }
+              }
+            },
+            { success: false, error: "Failed to process comment notification" },
+          )
+        }
+        break
+      }
+
+      case "test_notification": {
+        // Send a test email with generic content
+        await safeExecute(
+          "EMAIL SERVICE",
+          "sending test notification",
+          async () => {
+            const result = await sendEmail({
+              type: "test_notification",
+              email: user.email,
+              subject: "Test Notification from WorkTrac",
+              data: {
+                userName: user.name || "there",
+                messageContent: message || "This is a test notification from WorkTrac.",
+              },
+            })
+
+            if (!result.success) {
+              logError("EMAIL SERVICE", "Failed to send test notification email", result.error)
+            }
+            return result
+          },
+          { success: false, error: "Failed to send test notification" },
+        )
         break
       }
 
       default:
         // Generic email for other notification types
-        console.log(`[EMAIL SERVICE] Sending notification email to ${user.name} (${user.email})`)
-        console.log(`Subject: ${title}`)
-        console.log(`Message: ${message}`)
+        console.log(`[EMAIL SERVICE] Unhandled notification type: ${type}`)
+        await sendEmail({
+          type: "generic_notification",
+          email: user.email,
+          subject: title,
+          data: {
+            userName: user.name || "there",
+            messageTitle: title,
+            messageContent: message,
+            actionUrl: fullActionUrl,
+          },
+        })
         break
     }
   } catch (error) {
