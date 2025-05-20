@@ -16,6 +16,7 @@ export function TelegramTestNotification() {
 
     setIsSending(true)
     try {
+      // Use the dedicated API route for testing
       const response = await fetch("/api/telegram/test-notification", {
         method: "POST",
         headers: {
@@ -25,18 +26,20 @@ export function TelegramTestNotification() {
       })
 
       if (!response.ok) {
-        throw new Error("Failed to send test notification")
+        const errorData = await response.json()
+        console.error("Test notification API error:", errorData)
+        throw new Error(errorData.error || "Failed to send test notification")
       }
 
       toast({
         title: "Test Notification Sent",
-        description: "If your Telegram is connected, you should receive a message shortly.",
+        description: "If your Telegram account is connected, you should receive a message shortly.",
       })
     } catch (error) {
       console.error("Error sending test notification:", error)
       toast({
         title: "Error",
-        description: "Failed to send test notification. Please check your connection.",
+        description: error.message || "Failed to send test notification. Please check your connection.",
         variant: "destructive",
       })
     } finally {

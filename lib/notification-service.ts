@@ -118,6 +118,10 @@ export async function sendNotification({
       case "comment_added":
         channels = preferences.comments
         break
+      case "test_notification":
+        // For test notifications, force all channels
+        channels = "both"
+        break
       default:
         channels = "push" // Default to push only
     }
@@ -143,8 +147,12 @@ export async function sendNotification({
       await sendEmailNotification(userId, type, title, message, actionUrl, metadata)
     }
 
-    // Send Telegram notification if enabled
-    if (channels === "telegram" || (channels === "both" && preferences.telegramEnabled)) {
+    // Send Telegram notification if enabled or if it's a test notification
+    if (
+      type === "test_notification" ||
+      channels === "telegram" ||
+      (channels === "both" && preferences.telegramEnabled)
+    ) {
       await sendTelegramNotification(userId, type, title, message, actionUrl, metadata)
     }
   } catch (error) {

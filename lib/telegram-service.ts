@@ -22,22 +22,42 @@ export async function sendTelegramMessage(
   } = {},
 ): Promise<boolean> {
   try {
-    const response = await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
+    console.log("Sending Telegram message to chat ID:", chatId)
+    console.log("Message:", message)
+    console.log("Options:", options)
+
+    if (!TELEGRAM_BOT_TOKEN) {
+      console.error("TELEGRAM_BOT_TOKEN is not set")
+      return false
+    }
+
+    const apiUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`
+    console.log("API URL (token hidden):", "https://api.telegram.org/bot***/sendMessage")
+
+    const body = {
+      chat_id: chatId,
+      text: message,
+      parse_mode: options.parseMode,
+      disable_web_page_preview: options.disableWebPagePreview,
+      disable_notification: options.disableNotification,
+      reply_to_message_id: options.replyToMessageId,
+    }
+
+    const response = await fetch(apiUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: message,
-        parse_mode: options.parseMode,
-        disable_web_page_preview: options.disableWebPagePreview,
-        disable_notification: options.disableNotification,
-        reply_to_message_id: options.replyToMessageId,
-      }),
+      body: JSON.stringify(body),
     })
 
     const data = await response.json()
+    console.log("Telegram API response:", data)
+
+    if (!data.ok) {
+      console.error("Telegram API error:", data.description)
+    }
+
     return data.ok
   } catch (error) {
     console.error("Error sending Telegram message:", error)
@@ -140,14 +160,19 @@ export async function unlinkTelegramChat(userId: string): Promise<boolean> {
  */
 export async function getUserTelegramChatId(userId: string): Promise<string | null> {
   try {
+    console.log("Getting Telegram chat ID for user:", userId)
     const userRef = doc(db, "users", userId)
     const userDoc = await getDoc(userRef)
 
     if (!userDoc.exists()) {
+      console.log("User not found in database")
       return null
     }
 
     const userData = userDoc.data()
+    console.log("User telegramChatId:", userData.telegramChatId)
+    console.log("User telegramLinked status:", userData.telegramLinked)
+
     return userData.telegramChatId || null
   } catch (error) {
     console.error("Error getting user Telegram chat ID:", error)

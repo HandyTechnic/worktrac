@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/auth-context"
-import { generateTelegramVerificationCode } from "@/lib/telegram-service"
+import { generateTelegramVerificationCode, getUserTelegramChatId } from "@/lib/telegram-service"
 import { doc, getDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase/config"
 import { TelegramSetupGuide } from "./telegram-setup-guide"
@@ -15,6 +15,7 @@ export function TelegramConnection() {
   const { user } = useAuth()
   const { toast } = useToast()
   const [isConnected, setIsConnected] = useState(false)
+  const [chatId, setChatId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [verificationCode, setVerificationCode] = useState<string | null>(null)
 
@@ -29,7 +30,16 @@ export function TelegramConnection() {
 
         if (userDoc.exists()) {
           const userData = userDoc.data()
-          setIsConnected(!!userData.telegramLinked)
+          console.log("User Telegram status:", userData.telegramLinked)
+          console.log("User Telegram chat ID:", userData.telegramChatId)
+
+          const isUserConnected = !!userData.telegramLinked
+          setIsConnected(isUserConnected)
+
+          if (isUserConnected) {
+            const telegramChatId = await getUserTelegramChatId(user.id)
+            setChatId(telegramChatId)
+          }
         }
       } catch (error) {
         console.error("Error checking Telegram connection:", error)
@@ -81,6 +91,7 @@ export function TelegramConnection() {
       if (response.ok) {
         setIsConnected(false)
         setVerificationCode(null)
+        setChatId(null)
 
         toast({
           title: "Telegram Disconnected",
@@ -112,6 +123,7 @@ export function TelegramConnection() {
           <Alert>
             <AlertDescription>
               Your Telegram account is connected. You will receive notifications via Telegram.
+              {chatId && <p className="text-xs mt-2 text-muted-foreground">Connected to chat ID: {chatId}</p>}
             </AlertDescription>
           </Alert>
         ) : (
